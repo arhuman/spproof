@@ -23,6 +23,7 @@ GOVULNCHECK_VERSION := latest
 ## audit: vet, staticcheck and vulnerability scan
 audit: cover
 	@go vet ./...
+	@which golangci-lint > /dev/null && golangci-lint run ./... || echo "golangci-lint not installed, skipping"
 	@which staticcheck > /dev/null && staticcheck ./... || echo "staticcheck not installed, skipping"
 	@which govulncheck > /dev/null && govulncheck ./... || echo "govulncheck not installed, skipping"
 

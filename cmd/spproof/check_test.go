@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -146,6 +147,94 @@ func TestStdinTypeKeyedByAsExtension(t *testing.T) {
 			t.Errorf("go file under a go-only rule: exit = %d, want 1", code)
 		}
 	})
+}
+
+// TestStdinOversizedRefusesRatherThanTruncates pins the invariant that content
+// the engine never read is never reported as content that held. Truncating at
+// the cap would return exit 0 over a violation past it, so the refusal is the
+// point: exit 2, never exit 0. The reader is synthetic rather than a real file
+// so the case costs no disk.
+func TestStdinOversizedRefusesRatherThanTruncates(t *testing.T) {
+	policy := writePolicy(t, todoPolicy)
+	dir := t.TempDir()
+
+	// One byte past the cap is enough: the violation itself never has to be
+	// reached for the run to be unevaluable.
+	oversized := io.MultiReader(
+		strings.NewReader("clean\n"),
+		io.LimitReader(&neverEndingReader{}, maxStdinBytes),
+	)
+
+	var out, errb strings.Builder
+	inDir(t, dir, func() {
+		code := run([]string{"check", "--policy", policy, "--stdin", "--as=draft.md"},
+			oversized, &out, &errb)
+		if code != exitError {
+			t.Fatalf("exit = %d, want 2 (stdout: %q, stderr: %q)", code, out.String(), errb.String())
+		}
+	})
+	if !strings.Contains(errb.String(), "stdin exceeds the maximum size") {
+		t.Errorf("stderr = %q, want it to name the size refusal", errb.String())
+	}
+}
+
+// TestStdinAtCapStillRuns guards the boundary from the other side: the refusal
+// must trigger past the cap, not at it, or the fix would reject valid payloads.
+func TestStdinAtCapStillRuns(t *testing.T) {
+	policy := writePolicy(t, todoPolicy)
+	dir := t.TempDir()
+
+	atCap := io.LimitReader(&neverEndingReader{}, maxStdinBytes)
+
+	var out, errb strings.Builder
+	inDir(t, dir, func() {
+		code := run([]string{"check", "--policy", policy, "--stdin", "--as=draft.md"}, atCap, &out, &errb)
+		if code != exitOK {
+			t.Fatalf("exit = %d, want 0 at exactly the cap (stderr: %q)", code, errb.String())
+		}
+	})
+}
+
+// TestStdinAndFileAgree is the equivalence the truncation defect broke: the
+// same bytes must produce the same verdict through either input path.
+func TestStdinAndFileAgree(t *testing.T) {
+	policy := writePolicy(t, todoPolicy)
+	content := "clean\nTODO here\n"
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "draft.md"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var fileOut, stdinOut, errb strings.Builder
+	var fileCode, stdinCode int
+	inDir(t, dir, func() {
+		fileCode = run([]string{"check", "--policy", policy, "draft.md"}, strings.NewReader(""), &fileOut, &errb)
+		stdinCode = run([]string{"check", "--policy", policy, "--stdin", "--as=draft.md"}, strings.NewReader(content), &stdinOut, &errb)
+	})
+	if fileCode != stdinCode {
+		t.Errorf("exit codes disagree: file = %d, stdin = %d", fileCode, stdinCode)
+	}
+	if fileOut.String() != stdinOut.String() {
+		t.Errorf("output disagrees:\n file  = %q\n stdin = %q", fileOut.String(), stdinOut.String())
+	}
+}
+
+// neverEndingReader yields non-violating lines forever, so a test can build an
+// oversized payload without allocating one. The newlines matter: a single line
+// past engine.MaxLineLength would fail the run for the wrong reason and mask
+// what these tests are pinning.
+type neverEndingReader struct{ n int }
+
+func (r *neverEndingReader) Read(p []byte) (int, error) {
+	for i := range p {
+		if r.n%64 == 63 {
+			p[i] = '\n'
+		} else {
+			p[i] = 'a'
+		}
+		r.n++
+	}
+	return len(p), nil
 }
 
 func TestJSONFormat(t *testing.T) {

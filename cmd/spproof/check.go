@@ -194,21 +194,7 @@ func render(w io.Writer, format string, r engine.Result) error {
 
 func collect(paths []string, useStdin bool, asName string, stdin io.Reader) ([]engine.Source, error) {
 	if useStdin {
-		if asName == "" {
-			return nil, errors.New("--stdin requires --as=<filename>")
-		}
-		if len(paths) > 0 {
-			return nil, errors.New("--stdin takes no path arguments")
-		}
-		content, err := io.ReadAll(io.LimitReader(stdin, maxStdinBytes))
-		if err != nil {
-			return nil, fmt.Errorf("read stdin: %w", err)
-		}
-		return []engine.Source{{
-			Path:     filepath.ToSlash(asName),
-			Open:     func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(string(content))), nil },
-			Explicit: true,
-		}}, nil
+		return collectStdin(paths, asName, stdin)
 	}
 	if asName != "" {
 		return nil, errors.New("--as requires --stdin")
@@ -219,9 +205,41 @@ func collect(paths []string, useStdin bool, asName string, stdin io.Reader) ([]e
 	return collectPaths(paths)
 }
 
+// collectStdin reads the whole stdin payload into a single source named by
+// asName. It refuses rather than truncates when the payload exceeds
+// maxStdinBytes, so a rule is never reported as holding over bytes the engine
+// did not read.
+func collectStdin(paths []string, asName string, stdin io.Reader) ([]engine.Source, error) {
+	if asName == "" {
+		return nil, errors.New("--stdin requires --as=<filename>")
+	}
+	if len(paths) > 0 {
+		return nil, errors.New("--stdin takes no path arguments")
+	}
+	// Reading one byte past the cap is what makes an oversized payload
+	// detectable at all: at exactly the cap the two cases are indistinguishable.
+	content, err := io.ReadAll(io.LimitReader(stdin, maxStdinBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read stdin: %w", err)
+	}
+	if len(content) > maxStdinBytes {
+		return nil, fmt.Errorf("%w: %d bytes", ErrStdinTooLarge, maxStdinBytes)
+	}
+	return []engine.Source{{
+		Path:     filepath.ToSlash(asName),
+		Open:     func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(string(content))), nil },
+		Explicit: true,
+	}}, nil
+}
+
 // maxStdinBytes bounds a hook's payload. A write-time hook sends one file, so
 // anything larger is a misuse rather than a case to support.
 const maxStdinBytes = 64 << 20
+
+// ErrStdinTooLarge reports that stdin exceeded maxStdinBytes. The run refuses
+// rather than checking a prefix of the content, so this is an exit 2 (the
+// engine could not run) and never an exit 0.
+var ErrStdinTooLarge = errors.New("stdin exceeds the maximum size")
 
 // collectPaths maps OS paths onto an fs.FS rooted at the working directory.
 // fs.FS rejects absolute paths and "..", so each argument is made relative to

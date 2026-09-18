@@ -16,3 +16,4 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ### Fixed
 - Version now resolves from build info when ldflags stamped nothing.
+- `--stdin` silently truncated at 64 MiB, so content past the cap was reported as holding. An oversized payload now exits 2.

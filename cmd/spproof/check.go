@@ -12,6 +12,7 @@ import (
 	"github.com/arhuman/spproof/internal/engine"
 	"github.com/arhuman/spproof/internal/policy"
 	"github.com/arhuman/spproof/internal/report"
+	"github.com/arhuman/spproof/internal/version"
 )
 
 // Exit codes. These are the command's contract with CI, hooks and agents.
@@ -44,7 +45,7 @@ Exit codes:
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 1 && (args[0] == "version" || args[0] == "--version") {
-		fmt.Fprintf(stdout, "spproof %s (%s, %s)\n", version, commit, buildDate)
+		fmt.Fprintf(stdout, "spproof %s\n", version.Build)
 		return exitOK
 	}
 	if len(args) == 0 || args[0] != "check" {

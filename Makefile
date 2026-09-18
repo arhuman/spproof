@@ -9,10 +9,11 @@ COVER_FILE  := coverage.out
 VERSION     := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT      := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_DATE  := $(shell git show -s --format=%cI HEAD 2>/dev/null || echo unknown)
+VERSION_PKG := github.com/arhuman/spproof/internal/version
 LDFLAGS     := -s -w \
-	-X main.version=$(VERSION) \
-	-X main.commit=$(COMMIT) \
-	-X main.buildDate=$(BUILD_DATE)
+	-X $(VERSION_PKG).Version=$(VERSION) \
+	-X $(VERSION_PKG).GitCommit=$(COMMIT) \
+	-X $(VERSION_PKG).BuildDate=$(BUILD_DATE)
 
 GOLANGCI_VERSION   := v2.1.6
 GOVULNCHECK_VERSION := latest

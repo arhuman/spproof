@@ -7,13 +7,6 @@ package main
 
 import "os"
 
-// Build metadata, injected via -ldflags by the Makefile.
-var (
-	version   = "dev"
-	commit    = "unknown"
-	buildDate = "unknown"
-)
-
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }

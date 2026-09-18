@@ -2,6 +2,10 @@ package engine
 
 import (
 	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -398,6 +402,125 @@ func TestCollectSingleFile(t *testing.T) {
 func TestCollectMissingPath(t *testing.T) {
 	if _, err := Collect(fstest.MapFS{}, []string{"nope.md"}); err == nil {
 		t.Fatal("want error for unreadable path, got nil")
+	}
+}
+
+// realTree builds a temp directory on the real filesystem and returns an fs.FS
+// rooted at it. fstest.MapFS cannot represent a symlink or a FIFO, so the
+// non-regular-file rules can only be exercised against a real tree.
+func realTree(t *testing.T) (string, fs.FS) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink and FIFO semantics differ on Windows")
+	}
+	dir := t.TempDir()
+	return dir, os.DirFS(dir)
+}
+
+// TestCollectSkipsSymlinkWhileWalking pins that a walk cannot leave the tree it
+// was given. Following the link would read an outside file and report it under
+// an inside path, which is both a disclosure and a false location.
+func TestCollectSkipsSymlinkWhileWalking(t *testing.T) {
+	dir, fsys := realTree(t)
+	if err := os.WriteFile(filepath.Join(dir, "real.md"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "secret.md")
+	if err := os.WriteFile(outside, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "link.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Collect(fsys, []string{"."})
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	// The sibling regular file must still be collected: a skipped entry drops
+	// itself, not the walk.
+	if len(got) != 1 || got[0].Path != "real.md" {
+		var paths []string
+		for _, s := range got {
+			paths = append(paths, s.Path)
+		}
+		t.Fatalf("got %v, want only real.md", paths)
+	}
+}
+
+// TestCollectSkipsFIFOWhileWalking pins that a walk never opens a FIFO. Reading
+// one with no writer blocks forever, and a hook that never returns is worse
+// than one that fails.
+func TestCollectSkipsFIFOWhileWalking(t *testing.T) {
+	dir, fsys := realTree(t)
+	if err := os.WriteFile(filepath.Join(dir, "real.md"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mkfifo(t, filepath.Join(dir, "pipe.md"))
+
+	got, err := Collect(fsys, []string{"."})
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	if len(got) != 1 || got[0].Path != "real.md" {
+		var paths []string
+		for _, s := range got {
+			paths = append(paths, s.Path)
+		}
+		t.Fatalf("got %v, want only real.md", paths)
+	}
+}
+
+// TestCollectRefusesNamedNonRegularFile is the other half of the rule: a path
+// named directly is a request to check it, so refusing is the only answer that
+// is not a clean-looking verdict over content never read.
+func TestCollectRefusesNamedNonRegularFile(t *testing.T) {
+	dir, fsys := realTree(t)
+	outside := filepath.Join(t.TempDir(), "secret.md")
+	if err := os.WriteFile(outside, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "link.md")); err != nil {
+		t.Fatal(err)
+	}
+	mkfifo(t, filepath.Join(dir, "pipe.md"))
+
+	for _, name := range []string{"link.md", "pipe.md"} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Collect(fsys, []string{name}); !errors.Is(err, ErrNotRegularFile) {
+				t.Errorf("got %v, want ErrNotRegularFile", err)
+			}
+		})
+	}
+}
+
+// TestCollectSymlinkedDirectoryNotWalked guards the recursion case: a link to a
+// directory is reported by WalkDir as a non-directory, so it must drop like any
+// other link rather than pulling an outside tree in.
+func TestCollectSymlinkedDirectoryNotWalked(t *testing.T) {
+	dir, fsys := realTree(t)
+	if err := os.WriteFile(filepath.Join(dir, "real.md"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outsideDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outsideDir, "secret.md"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(dir, "linkdir")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Collect(fsys, []string{"."})
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	for _, s := range got {
+		if strings.Contains(s.Path, "secret") {
+			t.Errorf("walked through a symlinked directory: got %q", s.Path)
+		}
+	}
+	if len(got) != 1 {
+		t.Errorf("got %d sources, want only real.md", len(got))
 	}
 }
 

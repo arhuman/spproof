@@ -28,6 +28,13 @@ const MaxLineLength = 1 << 20 // 1 MiB
 // ErrLineTooLong is returned when a file contains a line over MaxLineLength.
 var ErrLineTooLong = errors.New("engine: line exceeds maximum length")
 
+// ErrNotRegularFile is returned when a path named directly is a symlink, device,
+// socket or FIFO rather than a regular file. Such a path is refused rather than
+// checked: following it could read content from outside the tree, and reading a
+// FIFO can block forever. Non-regular files met while walking a directory are
+// skipped silently instead, since the walk never asked for them by name.
+var ErrNotRegularFile = errors.New("engine: not a regular file")
+
 // Result is the outcome of a run: the violations found, and the per-rule record
 // of where each rule actually ran.
 type Result struct {
@@ -234,11 +241,21 @@ func Collect(fsys fs.FS, roots []string) ([]Source, error) {
 
 	for _, root := range roots {
 		root = path.Clean(strings.TrimPrefix(root, "./"))
-		info, err := fs.Stat(fsys, root)
+		// Lstat, not Stat: Stat resolves a symlink and would report the target's
+		// mode, letting a link named on the command line pass the regular-file
+		// check below and be read from outside the tree.
+		info, err := fs.Lstat(fsys, root)
 		if err != nil {
 			return nil, fmt.Errorf("engine: stat %s: %w", root, err)
 		}
 		if !info.IsDir() {
+			// A named file that is not a regular file refuses the run rather
+			// than being skipped. Naming it is a request to check it, and
+			// silently checking nothing is the clean-looking verdict this tool
+			// exists to prevent.
+			if !info.Mode().IsRegular() {
+				return nil, fmt.Errorf("%w: %s", ErrNotRegularFile, root)
+			}
 			addSource(fsys, root, seen, &out, true)
 			continue
 		}
@@ -254,6 +271,12 @@ func Collect(fsys fs.FS, roots []string) ([]Source, error) {
 // walkDir appends every non-skipped file under root as a non-explicit source.
 // The root itself is walked even when its own name would be skipped: asking for
 // a directory by name is an explicit request to look inside it.
+//
+// Only regular files are admitted. A symlink is not followed, so the walk cannot
+// leave the tree it was given and report an outside file under an inside path. A
+// device or FIFO is not opened, since reading one can block forever and a run
+// that never returns is worse for a hook than one that fails. Both are skipped
+// silently: an entry met while walking was never asked for by name.
 func walkDir(fsys fs.FS, root string, seen map[string]struct{}, out *[]Source) error {
 	return fs.WalkDir(fsys, root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -263,6 +286,9 @@ func walkDir(fsys fs.FS, root string, seen map[string]struct{}, out *[]Source) e
 			if skipDir(d.Name()) && p != root {
 				return fs.SkipDir
 			}
+			return nil
+		}
+		if !d.Type().IsRegular() {
 			return nil
 		}
 		addSource(fsys, p, seen, out, false)

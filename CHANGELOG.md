@@ -17,3 +17,6 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 ### Fixed
 - Version now resolves from build info when ldflags stamped nothing.
 - `--stdin` silently truncated at 64 MiB, so content past the cap was reported as holding. An oversized payload now exits 2.
+- A symlink in a walked tree was followed out of the tree, reporting an outside file under an inside path. Symlinks met while walking are now skipped.
+- A FIFO or device file in a walked tree blocked the run indefinitely. Only regular files are walked.
+- A symlink, FIFO or device named directly now exits 2 rather than being read or silently passing.

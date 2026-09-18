@@ -14,10 +14,18 @@ import (
 )
 
 // Text writes one editor-jumpable line per violation:
-// file:line:col: [rule-id] message. It writes nothing when the result is clean.
+// file:line:col: [rule-id] message. A file-scoped violation has no position, so
+// it drops the line and column and renders as file: [rule-id] message. It
+// writes nothing when the result is clean.
 func Text(w io.Writer, r engine.Result) error {
 	for _, v := range r.Violations {
-		if _, err := fmt.Fprintf(w, "%s:%d:%d: [%s] %s\n", v.Path, v.Line, v.Column, v.RuleID, v.Message); err != nil {
+		var err error
+		if v.FileScoped {
+			_, err = fmt.Fprintf(w, "%s: [%s] %s\n", v.Path, v.RuleID, v.Message)
+		} else {
+			_, err = fmt.Fprintf(w, "%s:%d:%d: [%s] %s\n", v.Path, v.Line, v.Column, v.RuleID, v.Message)
+		}
+		if err != nil {
 			return fmt.Errorf("report: write: %w", err)
 		}
 	}
@@ -53,9 +61,13 @@ type jsonLocRef struct {
 	PhysicalLocation jsonPhysical `json:"physicalLocation"`
 }
 
+// jsonPhysical carries an optional Region exactly as SARIF does: a location
+// with an artifactLocation and no region is the standard way to say "this is
+// about the whole artifact", so a file-scoped violation omits it rather than
+// emitting a zero one.
 type jsonPhysical struct {
 	ArtifactLocation jsonArtifact `json:"artifactLocation"`
-	Region           jsonRegion   `json:"region"`
+	Region           *jsonRegion  `json:"region,omitempty"`
 }
 
 type jsonArtifact struct {
@@ -80,12 +92,16 @@ func JSON(w io.Writer, r engine.Result) error {
 		out.Rules = append(out.Rules, jsonRule{ID: c.RuleID, Check: c.Check, EvaluatedFiles: c.EvaluatedFiles})
 	}
 	for _, v := range r.Violations {
+		var region *jsonRegion
+		if !v.FileScoped {
+			region = &jsonRegion{StartLine: v.Line, StartColumn: v.Column, Snippet: v.Match}
+		}
 		out.Results = append(out.Results, jsonHit{
 			RuleID:  v.RuleID,
 			Message: jsonMessage{Text: v.Message},
 			Locations: []jsonLocRef{{PhysicalLocation: jsonPhysical{
 				ArtifactLocation: jsonArtifact{URI: v.Path},
-				Region:           jsonRegion{StartLine: v.Line, StartColumn: v.Column, Snippet: v.Match},
+				Region:           region,
 			}}},
 		})
 	}

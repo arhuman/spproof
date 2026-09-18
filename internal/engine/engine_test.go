@@ -274,6 +274,96 @@ rules:
 	}
 }
 
+// TestFileScopedSortsBeforeLineScoped pins where a violation with no line lands
+// among positioned ones in the same file: first, because it is about the file
+// as a whole rather than about anything inside it.
+func TestFileScopedSortsBeforeLineScoped(t *testing.T) {
+	p := load(t, `version: 1
+rules:
+  - id: z-no-todo
+    check: pattern_absent
+    files: ["**/*.md"]
+    pattern: "TODO"
+  - id: a-license
+    check: pattern_present
+    files: ["**/*.md"]
+    pattern: "SPDX-License-Identifier"
+`)
+	files := fstest.MapFS{"a.md": {Data: []byte("first\nTODO here\n")}}
+
+	r, err := Run(p, sources(t, files))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(r.Violations) != 2 {
+		t.Fatalf("got %d violations, want 2", len(r.Violations))
+	}
+	if !r.Violations[0].FileScoped || r.Violations[0].RuleID != "a-license" {
+		t.Errorf("violations[0] = %+v, want the file-scoped a-license failure", r.Violations[0])
+	}
+	if r.Violations[1].FileScoped || r.Violations[1].Line != 2 {
+		t.Errorf("violations[1] = %+v, want the line-scoped failure on line 2", r.Violations[1])
+	}
+
+	for i := 0; i < 5; i++ {
+		again, err := Run(p, sources(t, files))
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		for j := range r.Violations {
+			if r.Violations[j] != again.Violations[j] {
+				t.Fatalf("run %d differs at %d", i, j)
+			}
+		}
+	}
+}
+
+// TestFileScopedSortsFirstDespiteLaterRuleID proves the ordering comes from the
+// scope and not from the rule id winning the tie by luck.
+func TestFileScopedSortsFirstDespiteLaterRuleID(t *testing.T) {
+	p := load(t, `version: 1
+rules:
+  - id: a-no-todo
+    check: pattern_absent
+    files: ["**/*.md"]
+    pattern: "TODO"
+  - id: z-license
+    check: pattern_present
+    files: ["**/*.md"]
+    pattern: "SPDX-License-Identifier"
+`)
+	files := fstest.MapFS{"a.md": {Data: []byte("TODO on line one\n")}}
+
+	r, err := Run(p, sources(t, files))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(r.Violations) != 2 {
+		t.Fatalf("got %d violations, want 2", len(r.Violations))
+	}
+	if r.Violations[0].RuleID != "z-license" || !r.Violations[0].FileScoped {
+		t.Errorf("violations[0] = %+v, want the file-scoped z-license failure first", r.Violations[0])
+	}
+}
+
+// TestSortPutsFileScopedFirstOnScopeAlone pins the ordering on the scope rather
+// than on Line happening to be zero. The input gives the file-scoped violation
+// the later line and the later rule id, so every other clause of the comparator
+// would rank it last.
+func TestSortPutsFileScopedFirstOnScopeAlone(t *testing.T) {
+	v := []rules.Violation{
+		{RuleID: "a-rule", Path: "a.md", Line: 1, Column: 1},
+		{RuleID: "z-rule", Path: "a.md", Line: 99, Column: 9, FileScoped: true},
+	}
+	sortViolations(v)
+	if !v[0].FileScoped {
+		t.Errorf("violations[0] = %+v, want the file-scoped one first", v[0])
+	}
+	if v[1].RuleID != "a-rule" {
+		t.Errorf("violations[1] = %+v, want a-rule", v[1])
+	}
+}
+
 func TestCollectWalksDirectoriesRecursively(t *testing.T) {
 	files := fstest.MapFS{
 		"a.md":                  {Data: []byte("x")},

@@ -144,13 +144,19 @@ func coverage(p *policy.Policy, evaluated map[string]int) []RuleCoverage {
 	return out
 }
 
-// sortViolations orders by path, then line, then rule id, then column, so two
-// runs over an unchanged tree emit byte-identical output.
+// sortViolations orders by path, then file-scoped before line-scoped, then
+// line, then rule id, then column, so two runs over an unchanged tree emit
+// byte-identical output. A file-scoped violation has no line and sorts first
+// within its file: it is about the file as a whole, so it reads before any
+// position inside it.
 func sortViolations(v []rules.Violation) {
 	sort.SliceStable(v, func(i, j int) bool {
 		a, b := v[i], v[j]
 		if a.Path != b.Path {
 			return a.Path < b.Path
+		}
+		if a.FileScoped != b.FileScoped {
+			return a.FileScoped
 		}
 		if a.Line != b.Line {
 			return a.Line < b.Line

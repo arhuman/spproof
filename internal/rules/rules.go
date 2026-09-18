@@ -35,17 +35,25 @@ type FileMeta struct {
 	Type FileType
 }
 
-// Violation is a single proof failure. Line and Column are 1-based; Column
-// counts runes, not bytes, so a caller can position a cursor in a UTF-8 editor.
-// A violation that is file-scoped rather than line-scoped reports Line 0 and
-// Column 0.
+// Violation is a single proof failure.
+//
+// Line and Column are 1-based; Column counts runes, not bytes, so a caller can
+// position a cursor in a UTF-8 editor. They are meaningful only while
+// FileScoped is false.
+//
+// FileScoped marks a failure that is about the file as a whole and has no
+// position in it, such as a required pattern that appears on no line. Line and
+// Column are then both zero and carry no meaning: a renderer must branch on
+// FileScoped rather than print them, since line 0 does not exist and a caller
+// parsing it as a location gets nonsense.
 type Violation struct {
-	RuleID  string
-	Path    string
-	Line    int
-	Column  int
-	Message string
-	Match   string
+	RuleID     string
+	Path       string
+	Line       int
+	Column     int
+	FileScoped bool
+	Message    string
+	Match      string
 }
 
 // Rule is a stateful visitor over one file.

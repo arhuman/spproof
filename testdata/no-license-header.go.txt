@@ -1,0 +1,6 @@
+package sample
+
+// This file carries no license identifier, so a pattern_present rule requiring
+// one fails on it once, with no line to point at.
+
+func Sample() string { return "sample" }

@@ -1,0 +1,10 @@
+version: 1
+rules:
+  - id: no-em-dash
+    check: pattern_absent
+    files:
+      - "*.md"
+      - "cmd/**/*.go"
+      - "internal/**/*.go"
+      - "docs/**/*.md"
+    pattern: "[\u2014\u2013]"

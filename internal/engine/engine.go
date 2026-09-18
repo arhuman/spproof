@@ -105,6 +105,40 @@ func RunWith(p *policy.Policy, sources []Source, exists rules.Existence) (Result
 func checkFile(p *policy.Policy, src Source, evaluated map[string]int, res *resolver) ([]rules.Violation, error) {
 	meta := rules.FileMeta{Path: src.Path, Type: rules.TypeOf(src.Path)}
 
+	active := activeRules(p, src, meta, evaluated)
+	if len(active) == 0 {
+		return nil, nil
+	}
+
+	rc, err := src.Open()
+	if err != nil {
+		return nil, fmt.Errorf("engine: open %s: %w", src.Path, err)
+	}
+	defer rc.Close()
+
+	contextual := contextualRules(active)
+
+	out, err := scanLines(rc, active, contextual, res)
+	if err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			return nil, fmt.Errorf("%w: %s", ErrLineTooLong, src.Path)
+		}
+		return nil, fmt.Errorf("engine: read %s: %w", src.Path, err)
+	}
+
+	for _, r := range active {
+		out = append(out, r.Finish()...)
+	}
+	for _, c := range contextual {
+		res.dispatch(c.TakeCandidates())
+	}
+	return out, nil
+}
+
+// activeRules instantiates the rules that apply to this source and counts each
+// one in evaluated. An Explicit source skips the glob test: naming the file is
+// itself the selection.
+func activeRules(p *policy.Policy, src Source, meta rules.FileMeta, evaluated map[string]int) []rules.Rule {
 	active := make([]rules.Rule, 0, len(p.Rules))
 	for _, pr := range p.Rules {
 		if !src.Explicit && !pr.Matches(src.Path) {
@@ -118,23 +152,23 @@ func checkFile(p *policy.Policy, src Source, evaluated map[string]int, res *reso
 		active = append(active, r)
 		evaluated[pr.Spec.ID]++
 	}
-	if len(active) == 0 {
-		return nil, nil
-	}
+	return active
+}
 
-	rc, err := src.Open()
-	if err != nil {
-		return nil, fmt.Errorf("engine: open %s: %w", src.Path, err)
-	}
-	defer rc.Close()
-
+func contextualRules(active []rules.Rule) []rules.Contextual {
 	contextual := make([]rules.Contextual, 0, len(active))
 	for _, r := range active {
 		if c, ok := r.(rules.Contextual); ok {
 			contextual = append(contextual, c)
 		}
 	}
+	return contextual
+}
 
+// scanLines feeds every line to every active rule and dispatches contextual
+// candidates as they appear. The returned error is the scanner's, unwrapped, so
+// the caller can distinguish a too-long line from a read failure.
+func scanLines(rc io.Reader, active []rules.Rule, contextual []rules.Contextual, res *resolver) ([]rules.Violation, error) {
 	var out []rules.Violation
 	sc := bufio.NewScanner(rc)
 	sc.Buffer(make([]byte, 0, 64*1024), MaxLineLength)
@@ -147,19 +181,7 @@ func checkFile(p *policy.Policy, src Source, evaluated map[string]int, res *reso
 			res.dispatch(c.TakeCandidates())
 		}
 	}
-	if err := sc.Err(); err != nil {
-		if errors.Is(err, bufio.ErrTooLong) {
-			return nil, fmt.Errorf("%w: %s", ErrLineTooLong, src.Path)
-		}
-		return nil, fmt.Errorf("engine: read %s: %w", src.Path, err)
-	}
-	for _, r := range active {
-		out = append(out, r.Finish()...)
-	}
-	for _, c := range contextual {
-		res.dispatch(c.TakeCandidates())
-	}
-	return out, nil
+	return out, sc.Err()
 }
 
 func coverage(p *policy.Policy, evaluated map[string]int) []RuleCoverage {
@@ -220,26 +242,32 @@ func Collect(fsys fs.FS, roots []string) ([]Source, error) {
 			addSource(fsys, root, seen, &out, true)
 			continue
 		}
-		err = fs.WalkDir(fsys, root, func(p string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				if skipDir(d.Name()) && p != root {
-					return fs.SkipDir
-				}
-				return nil
-			}
-			addSource(fsys, p, seen, &out, false)
-			return nil
-		})
-		if err != nil {
+		if err := walkDir(fsys, root, seen, &out); err != nil {
 			return nil, fmt.Errorf("engine: walk %s: %w", root, err)
 		}
 	}
 
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil
+}
+
+// walkDir appends every non-skipped file under root as a non-explicit source.
+// The root itself is walked even when its own name would be skipped: asking for
+// a directory by name is an explicit request to look inside it.
+func walkDir(fsys fs.FS, root string, seen map[string]struct{}, out *[]Source) error {
+	return fs.WalkDir(fsys, root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if skipDir(d.Name()) && p != root {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		addSource(fsys, p, seen, out, false)
+		return nil
+	})
 }
 
 func addSource(fsys fs.FS, p string, seen map[string]struct{}, out *[]Source, explicit bool) {

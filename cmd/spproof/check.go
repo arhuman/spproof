@@ -53,6 +53,26 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return exitError
 	}
 
+	opts, ok := parseCheckFlags(args[1:], stderr)
+	if !ok {
+		return exitError
+	}
+	return runCheck(opts, stdin, stdout, stderr)
+}
+
+// checkOptions is the parsed and validated form of a "check" invocation.
+type checkOptions struct {
+	policyPath string
+	format     string
+	useStdin   bool
+	asName     string
+	paths      []string
+}
+
+// parseCheckFlags parses and validates the check flags, reporting any problem on
+// stderr itself. A false second result means the caller should exit with
+// exitError and print nothing more.
+func parseCheckFlags(args []string, stderr io.Writer) (checkOptions, bool) {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() { fmt.Fprint(stderr, usage) }
@@ -62,26 +82,37 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		useStdin   = fs.Bool("stdin", false, "read content from stdin")
 		asName     = fs.String("as", "", "filename stdin content is checked under")
 	)
-	if err := fs.Parse(permute(fs, args[1:])); err != nil {
-		return exitError
+	if err := fs.Parse(permute(fs, args)); err != nil {
+		return checkOptions{}, false
 	}
 
 	if *policyPath == "" {
 		fmt.Fprintln(stderr, "spproof: --policy is required")
-		return exitError
+		return checkOptions{}, false
 	}
 	if *format != "text" && *format != "json" {
 		fmt.Fprintf(stderr, "spproof: unknown format %q\n", *format)
-		return exitError
+		return checkOptions{}, false
 	}
+	return checkOptions{
+		policyPath: *policyPath,
+		format:     *format,
+		useStdin:   *useStdin,
+		asName:     *asName,
+		paths:      fs.Args(),
+	}, true
+}
 
-	p, err := policy.Load(*policyPath)
+// runCheck loads the policy, runs the engine over the requested sources and
+// renders the result, mapping every failure onto the command's exit codes.
+func runCheck(opts checkOptions, stdin io.Reader, stdout, stderr io.Writer) int {
+	p, err := policy.Load(opts.policyPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "spproof: %v\n", err)
 		return exitError
 	}
 
-	sources, err := collect(fs.Args(), *useStdin, *asName, stdin)
+	sources, err := collect(opts.paths, opts.useStdin, opts.asName, stdin)
 	if err != nil {
 		fmt.Fprintf(stderr, "spproof: %v\n", err)
 		return exitError
@@ -93,7 +124,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return exitError
 	}
 
-	if err := render(stdout, *format, result); err != nil {
+	if err := render(stdout, opts.format, result); err != nil {
 		fmt.Fprintf(stderr, "spproof: %v\n", err)
 		return exitError
 	}

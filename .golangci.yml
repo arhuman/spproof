@@ -54,6 +54,15 @@ linters:
       #   path: internal/(parse|storage)/
       # Fixtures need traversable directories and sometimes deliberately odd
       # modes (G301/G302/G306). None of it ships in the binary.
+      # hasScheme walks a string one byte at a time deciding whether it starts
+      # with a URI scheme. Every character-class comparison counts as a branch,
+      # so gocyclo measures the alphabet rather than the logic: the function is
+      # 14 lines and splitting it would read worse. Scoped to this one function
+      # on purpose, so the limit still binds everywhere else in the package.
+      - linters:
+          - gocyclo
+        path: internal/rules/resolvable_local_path\.go
+        text: "func `hasScheme`"
       # A table-driven test that covers many cases is a good test, and its
       # branch count measures the cases rather than the logic. Complexity limits
       # exist to keep production code navigable.

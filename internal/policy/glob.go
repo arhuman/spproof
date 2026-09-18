@@ -18,16 +18,7 @@ func matchGlob(pattern, name string) bool {
 func matchSegments(pat, name []string) bool {
 	for len(pat) > 0 {
 		if pat[0] == "**" {
-			// Trailing ** matches everything left, including nothing.
-			if len(pat) == 1 {
-				return true
-			}
-			for i := 0; i <= len(name); i++ {
-				if matchSegments(pat[1:], name[i:]) {
-					return true
-				}
-			}
-			return false
+			return matchAfterDoubleStar(pat[1:], name)
 		}
 		if len(name) == 0 {
 			return false
@@ -38,6 +29,23 @@ func matchSegments(pat, name []string) bool {
 		pat, name = pat[1:], name[1:]
 	}
 	return len(name) == 0
+}
+
+// matchAfterDoubleStar reports whether rest matches some suffix of name, rest
+// being the pattern following a `**`. Every suffix is tried, including the empty
+// one and the whole of name, because `**` spans zero or more segments.
+func matchAfterDoubleStar(rest, name []string) bool {
+	// Fast path, not a correctness guard: the loop below reaches the same answer
+	// for an empty rest, since matchSegments(nil, nil) is true.
+	if len(rest) == 0 {
+		return true
+	}
+	for i := 0; i <= len(name); i++ {
+		if matchSegments(rest, name[i:]) {
+			return true
+		}
+	}
+	return false
 }
 
 // validateGlob reports an error for a pattern path.Match would reject, so a

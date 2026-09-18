@@ -159,3 +159,36 @@ rules:
 		}
 	}
 }
+
+// TestRuleMatchesTrailingDoubleStar covers the branch where ** ends the pattern
+// and has no segments left to consume. Nothing exercised it before, so breaking
+// it was invisible: a glob that silently stops matching is how file selection
+// fails without anyone noticing.
+func TestRuleMatchesTrailingDoubleStar(t *testing.T) {
+	p, err := Decode(strings.NewReader(`version: 1
+rules:
+  - id: a
+    check: pattern_absent
+    files: ["docs/**", "**"]
+    pattern: "x"
+`))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	r := p.Rules[0]
+
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"docs", true},
+		{"docs/a.md", true},
+		{"docs/deep/nested/a.md", true},
+		{"anything.txt", true},
+	}
+	for _, tc := range tests {
+		if got := r.Matches(tc.path); got != tc.want {
+			t.Errorf("Matches(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}

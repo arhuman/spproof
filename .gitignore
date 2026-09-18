@@ -1,0 +1,3 @@
+# Build artifacts, the same set `make clean` removes.
+bin/
+coverage.out

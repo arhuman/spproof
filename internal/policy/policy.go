@@ -74,8 +74,14 @@ type ruleNode struct {
 }
 
 // Load reads and validates a policy file from disk.
+//
+// The caller names the path, deliberately: --policy is explicit and required so
+// a verdict depends on nothing ambient. Opening a caller-supplied path is the
+// contract, not a traversal risk, and the file is parsed as data rather than
+// executed.
 func Load(path string) (*Policy, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- the policy path is the caller's explicit argument
+
 	if err != nil {
 		return nil, fmt.Errorf("policy: open: %w", err)
 	}

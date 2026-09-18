@@ -140,9 +140,9 @@ func TestExistsCacheConcurrentAccess(t *testing.T) {
 
 	var wrong atomic.Int64
 	var wg sync.WaitGroup
-	for i := 0; i < 64; i++ {
+	for range 64 {
 		wg.Add(1)
-		go func(i int) {
+		go func() {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
 				for path, want := range map[string]bool{"a.md": true, "b.md": true, "z.md": false} {
@@ -152,7 +152,7 @@ func TestExistsCacheConcurrentAccess(t *testing.T) {
 					}
 				}
 			}
-		}(i)
+		}()
 	}
 	wg.Wait()
 
@@ -164,13 +164,13 @@ func TestExistsCacheConcurrentAccess(t *testing.T) {
 func TestExistsCacheNilUnderUsesTheFilesystem(t *testing.T) {
 	c := NewExistsCache(nil)
 	dir := t.TempDir()
-	real := filepath.Join(dir, "real.md")
-	if err := os.WriteFile(real, []byte("x"), 0o600); err != nil {
+	existing := filepath.Join(dir, "real.md")
+	if err := os.WriteFile(existing, []byte("x"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if found, err := c.Exists(real); err != nil || !found {
-		t.Errorf("Exists(%q) = (%v, %v), want (true, nil)", real, found, err)
+	if found, err := c.Exists(existing); err != nil || !found {
+		t.Errorf("Exists(%q) = (%v, %v), want (true, nil)", existing, found, err)
 	}
 	if found, err := c.Exists(filepath.Join(dir, "nope.md")); err != nil || found {
 		t.Errorf("Exists on a missing path = (%v, %v), want (false, nil)", found, err)

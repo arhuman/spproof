@@ -90,7 +90,7 @@ func TestHookPathGate(t *testing.T) {
 
 	// One warm run first: the gate measures steady-state invocation, not the
 	// operating system's first read of a freshly linked binary.
-	warm := exec.Command(bin, "check", "--policy", policy, "one.go")
+	warm := exec.CommandContext(t.Context(), bin, "check", "--policy", policy, "one.go")
 	warm.Dir = dir
 	if out, err := warm.CombinedOutput(); err != nil {
 		t.Fatalf("warm-up run failed, so the fixture does not satisfy the policy: %v\n%s", err, out)
@@ -98,7 +98,7 @@ func TestHookPathGate(t *testing.T) {
 
 	best := time.Duration(1<<63 - 1)
 	for i := 0; i < gateRuns; i++ {
-		cmd := exec.Command(bin, "check", "--policy", policy, "one.go")
+		cmd := exec.CommandContext(t.Context(), bin, "check", "--policy", policy, "one.go")
 		cmd.Dir = dir
 		start := time.Now()
 		err := cmd.Run()
@@ -120,7 +120,7 @@ func TestHookPathGate(t *testing.T) {
 func buildBinary(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "spproof")
-	cmd := exec.Command("go", "build", "-o", bin, "../../cmd/spproof")
+	cmd := exec.CommandContext(t.Context(), "go", "build", "-o", bin, "../../cmd/spproof")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("building the binary: %v\n%s", err, out)
 	}

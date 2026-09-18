@@ -54,8 +54,13 @@ linters:
       #   path: internal/(parse|storage)/
       # Fixtures need traversable directories and sometimes deliberately odd
       # modes (G301/G302/G306). None of it ships in the binary.
+      # A table-driven test that covers many cases is a good test, and its
+      # branch count measures the cases rather than the logic. Complexity limits
+      # exist to keep production code navigable.
       - path: _test\.go
         linters:
           - dupl
           - funlen
+          - gocognit
+          - gocyclo
           - gosec

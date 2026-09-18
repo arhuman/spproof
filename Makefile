@@ -18,7 +18,7 @@ LDFLAGS     := -s -w \
 GOLANGCI_VERSION   := v2.1.6
 GOVULNCHECK_VERSION := latest
 
-.PHONY: audit bench build clean cover fulltest help test tidy tools
+.PHONY: audit bench build clean cover fulltest help release test tidy tools
 
 ## audit: vet, staticcheck and vulnerability scan
 audit: cover
@@ -57,6 +57,10 @@ fulltest:
 help:
 	@echo "Usage: make [target]\n"
 	@sed -n 's/^##//p' $(MAKEFILE_LIST) | column -t -s ':' | sed -e 's/^/ /'
+
+## release: derive the next version and tag it
+release:
+	@scripts/release.sh
 
 ## test: run unit tests
 test:

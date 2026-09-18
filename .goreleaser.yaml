@@ -1,0 +1,85 @@
+version: 2
+
+project_name: spproof
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: spproof
+    main: ./cmd/spproof
+    binary: spproof
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      # Keep the -X package path in sync with the Makefile VERSION_PKG.
+      - -s -w
+      # v{{ .Version }}, not {{ .Version }}: goreleaser drops the tag's leading v,
+      # which the two other build paths keep (`git describe` in the Makefile, and
+      # the module version a `go install` reads out of the build info). Put it
+      # back so all three report the same string. Archive names below stay
+      # unprefixed, which is the goreleaser filename convention.
+      - -X github.com/arhuman/spproof/internal/version.Version=v{{ .Version }}
+      - -X github.com/arhuman/spproof/internal/version.GitCommit={{ .ShortCommit }}
+      - -X github.com/arhuman/spproof/internal/version.BuildDate={{ .Date }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: checksums.txt
+
+# Satisfies the standard's supply_chain.sign_sbom check. Both need a tool on
+# PATH in CI: syft (SBOM) and cosign (signing), see release.yml. Without those
+# installer steps goreleaser fails with "syft/cosign: executable file not found".
+sboms:
+  - artifacts: archive
+
+# One Sigstore bundle, not a .sig plus a .pem: cosign 3 (what cosign-installer
+# v4 puts on PATH) writes the new bundle format by default, ignores
+# --output-signature/--output-certificate, and then fails on the empty --bundle
+# path it was never given ("create bundle file: open : no such file or
+# directory"). The bundle carries both the signature and the certificate, so
+# verification is `cosign verify-blob checksums.txt --bundle
+# checksums.txt.sigstore.json --certificate-identity-regexp ...`. Document that
+# form in the repo's README, and keep the old two-file form beside it for
+# releases already published.
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - --bundle=${signature}
+      - ${artifact}
+      - --yes
+    artifacts: checksum
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+release:
+  draft: false
+  prerelease: auto

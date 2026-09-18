@@ -68,23 +68,41 @@ type Source struct {
 // Each file is read exactly once regardless of how many rules apply to it. A
 // rule whose check cannot decide the file's type is dropped for that file only;
 // the file is still visited by the remaining rules.
+//
+// Existence resolution for contextual rules runs against the real filesystem.
+// Use RunWith to supply another rules.Existence.
 func Run(p *policy.Policy, sources []Source) (Result, error) {
+	return RunWith(p, sources, nil)
+}
+
+// RunWith is Run with an explicit rules.Existence backing the contextual
+// checks. A nil exists means the real filesystem.
+//
+// Existence answers are cached for the whole run, so a path referenced by fifty
+// documents is resolved once, and they are resolved off the read loop: a run
+// never reports a verdict while a resolution is still outstanding, since a
+// premature verdict would report clean for a reason no better than not having
+// waited.
+func RunWith(p *policy.Policy, sources []Source, exists rules.Existence) (Result, error) {
 	evaluated := make(map[string]int, len(p.Rules))
 	var violations []rules.Violation
 
+	res := newResolver(exists)
 	for _, src := range sources {
-		v, err := checkFile(p, src, evaluated)
+		v, err := checkFile(p, src, evaluated, res)
 		if err != nil {
+			res.wait()
 			return Result{}, err
 		}
 		violations = append(violations, v...)
 	}
+	violations = append(violations, res.wait()...)
 
 	sortViolations(violations)
 	return Result{Violations: violations, Coverage: coverage(p, evaluated)}, nil
 }
 
-func checkFile(p *policy.Policy, src Source, evaluated map[string]int) ([]rules.Violation, error) {
+func checkFile(p *policy.Policy, src Source, evaluated map[string]int, res *resolver) ([]rules.Violation, error) {
 	meta := rules.FileMeta{Path: src.Path, Type: rules.TypeOf(src.Path)}
 
 	active := make([]rules.Rule, 0, len(p.Rules))
@@ -110,6 +128,13 @@ func checkFile(p *policy.Policy, src Source, evaluated map[string]int) ([]rules.
 	}
 	defer rc.Close()
 
+	contextual := make([]rules.Contextual, 0, len(active))
+	for _, r := range active {
+		if c, ok := r.(rules.Contextual); ok {
+			contextual = append(contextual, c)
+		}
+	}
+
 	var out []rules.Violation
 	sc := bufio.NewScanner(rc)
 	sc.Buffer(make([]byte, 0, 64*1024), MaxLineLength)
@@ -117,6 +142,9 @@ func checkFile(p *policy.Policy, src Source, evaluated map[string]int) ([]rules.
 		line := sc.Text()
 		for _, r := range active {
 			out = append(out, r.OnLine(n, line)...)
+		}
+		for _, c := range contextual {
+			res.dispatch(c.TakeCandidates())
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -127,6 +155,9 @@ func checkFile(p *policy.Policy, src Source, evaluated map[string]int) ([]rules.
 	}
 	for _, r := range active {
 		out = append(out, r.Finish()...)
+	}
+	for _, c := range contextual {
+		res.dispatch(c.TakeCandidates())
 	}
 	return out, nil
 }

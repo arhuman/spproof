@@ -66,7 +66,7 @@ func (r *commentLineCharMax) OnLine(n int, text string) []Violation {
 		Path:    r.path,
 		Line:    n,
 		Column:  r.spec.Max + 1,
-		Message: fmt.Sprintf("comment line is %d characters, over the maximum of %d", length, r.spec.Max),
+		Message: r.spec.Msg(fmt.Sprintf("comment line is %d characters, over the maximum of %d", length, r.spec.Max)),
 	}}
 }
 

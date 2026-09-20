@@ -50,6 +50,6 @@ func (r *patternPresent) Finish() []Violation {
 		RuleID:     r.spec.ID,
 		Path:       r.path,
 		FileScoped: true,
-		Message:    fmt.Sprintf("required pattern %q matched no line", r.spec.Pattern.String()),
+		Message:    r.spec.Msg(fmt.Sprintf("required pattern %q matched no line", r.spec.Pattern.String())),
 	}}
 }

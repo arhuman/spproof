@@ -82,6 +82,6 @@ func (r *commentLineConsecutiveMax) close() []Violation {
 		Path:    r.path,
 		Line:    start,
 		Column:  1,
-		Message: fmt.Sprintf("run of %d consecutive comment lines, over the maximum of %d", length, r.spec.Max),
+		Message: r.spec.Msg(fmt.Sprintf("run of %d consecutive comment lines, over the maximum of %d", length, r.spec.Max)),
 	}}
 }

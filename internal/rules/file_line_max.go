@@ -47,6 +47,6 @@ func (r *fileLineMax) Finish() []Violation {
 		RuleID:     r.spec.ID,
 		Path:       r.path,
 		FileScoped: true,
-		Message:    fmt.Sprintf("file is %d lines, over the maximum of %d", r.lines, r.spec.Max),
+		Message:    r.spec.Msg(fmt.Sprintf("file is %d lines, over the maximum of %d", r.lines, r.spec.Max)),
 	}}
 }

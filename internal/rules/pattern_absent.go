@@ -51,7 +51,7 @@ func (r *patternAbsent) OnLine(n int, text string) []Violation {
 			Path:    r.path,
 			Line:    n,
 			Column:  utf8.RuneCountInString(text[:loc[0]]) + 1,
-			Message: fmt.Sprintf("forbidden pattern %q matched %q", r.spec.Pattern.String(), match),
+			Message: r.spec.Msg(fmt.Sprintf("forbidden pattern %q matched %q", r.spec.Pattern.String(), match)),
 			Match:   match,
 		})
 	}

@@ -30,6 +30,10 @@ type Candidate struct {
 	Raw    string
 	Line   int
 	Column int
+	// Message is the policy's own wording, empty when it set none. It is copied
+	// here rather than read from the Spec because a candidate outlives the rule
+	// that produced it: the resolver answers it after the file is closed.
+	Message string
 }
 
 // Violation renders the failure for a candidate whose existence could not be
@@ -40,6 +44,9 @@ func (c Candidate) Violation(err error) Violation {
 	msg := fmt.Sprintf("link target %q does not resolve to an existing file (%s)", c.Raw, c.Target)
 	if err != nil {
 		msg = fmt.Sprintf("link target %q could not be resolved (%s): %v", c.Raw, c.Target, err)
+	}
+	if c.Message != "" {
+		msg = c.Message
 	}
 	return Violation{
 		RuleID:  c.RuleID,
@@ -111,12 +118,13 @@ func (r *resolvableLocalPath) OnLine(n int, text string) []Violation {
 			continue
 		}
 		r.pending = append(r.pending, Candidate{
-			RuleID: r.spec.ID,
-			Path:   r.path,
-			Target: path.Join(r.dir, target),
-			Raw:    l.target,
-			Line:   n,
-			Column: utf8.RuneCountInString(text[:l.offset]) + 1,
+			RuleID:  r.spec.ID,
+			Path:    r.path,
+			Target:  path.Join(r.dir, target),
+			Raw:     l.target,
+			Line:    n,
+			Column:  utf8.RuneCountInString(text[:l.offset]) + 1,
+			Message: r.spec.Message,
 		})
 	}
 	return nil

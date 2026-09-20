@@ -77,6 +77,21 @@ type Spec struct {
 	Check   string
 	Pattern *regexp.Regexp
 	Max     int
+
+	// Message replaces the generated violation text when set. A generated
+	// message can say what matched but never why it is banned or what to write
+	// instead, which is the half a reader acting on the violation needs.
+	Message string
+}
+
+// Msg returns the policy's own wording when it set one, and the generated text
+// otherwise. A rule builds its generated message either way, since the argument
+// is already formatted by the time it gets here.
+func (s Spec) Msg(generated string) string {
+	if s.Message != "" {
+		return s.Message
+	}
+	return generated
 }
 
 // Factory builds a Rule for one file and reports which file types the check can

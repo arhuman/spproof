@@ -34,6 +34,35 @@ func TestDecodeValid(t *testing.T) {
 	}
 }
 
+// TestDecodeCarriesMessage pins the optional message through to the Spec. An
+// absent message must stay empty rather than becoming a placeholder, since the
+// rules fall back to their generated text on exactly that condition.
+func TestDecodeCarriesMessage(t *testing.T) {
+	const withMessage = `version: 1
+rules:
+  - id: no-em-dash
+    check: pattern_absent
+    files: ["**/*.md"]
+    pattern: "[a-z]"
+    message: "use a comma or a colon instead"
+`
+	p, err := Decode(strings.NewReader(withMessage))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got := p.Rules[0].Spec.Message; got != "use a comma or a colon instead" {
+		t.Errorf("Message = %q, want the policy's own wording", got)
+	}
+
+	p, err = Decode(strings.NewReader(validPolicy))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got := p.Rules[0].Spec.Message; got != "" {
+		t.Errorf("Message = %q, want empty when the policy set none", got)
+	}
+}
+
 // TestDecodeRejections pins every strict-validation refusal to a distinct
 // sentinel, which is what lets the CLI map the whole class to exit code 2.
 func TestDecodeRejections(t *testing.T) {

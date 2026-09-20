@@ -221,3 +221,53 @@ rules:
 		}
 	}
 }
+
+// TestDecodeBaselines pins the pointer semantics: an absent baseline is
+// distinct from baseline: 0, which is a real zero-tolerance ratchet.
+func TestDecodeBaselines(t *testing.T) {
+	base := "version: 1\nrules:\n  - id: r\n    check: pattern_absent\n    files: [\"*.md\"]\n    pattern: \"x\"\n"
+
+	p, err := Decode(strings.NewReader(base))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !p.Rules[0].Ratchet.Zero() {
+		t.Error("a rule with no baseline declared a ratchet")
+	}
+
+	p, err = Decode(strings.NewReader(base + "    baseline: 0\n"))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if p.Rules[0].Ratchet.Zero() {
+		t.Error("baseline: 0 read as no ratchet; zero tolerance is still a ratchet")
+	}
+	if got := p.Rules[0].Ratchet.Run; got == nil || *got != 0 {
+		t.Errorf("Run = %v, want a pointer to 0", got)
+	}
+
+	p, err = Decode(strings.NewReader(base + "    baseline_per_file: 4\n"))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got := p.Rules[0].Ratchet.PerFile; got == nil || *got != 4 {
+		t.Errorf("PerFile = %v, want a pointer to 4", got)
+	}
+	if p.Rules[0].Ratchet.Run != nil {
+		t.Error("baseline_per_file also set the run-scoped limit")
+	}
+}
+
+// TestDecodeRejectsNegativeBaseline: a negative tolerance is meaningless, and
+// silently clamping it would run a rule the policy did not declare.
+func TestDecodeRejectsNegativeBaseline(t *testing.T) {
+	base := "version: 1\nrules:\n  - id: r\n    check: pattern_absent\n    files: [\"*.md\"]\n    pattern: \"x\"\n"
+	for _, field := range []string{"baseline", "baseline_per_file"} {
+		t.Run(field, func(t *testing.T) {
+			_, err := Decode(strings.NewReader(base + "    " + field + ": -1\n"))
+			if !errors.Is(err, ErrBadBaseline) {
+				t.Errorf("Decode = %v, want ErrBadBaseline", err)
+			}
+		})
+	}
+}

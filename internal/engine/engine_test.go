@@ -561,3 +561,147 @@ func TestFenceAwareLinkRuleIgnoresCode(t *testing.T) {
 type stubExistence struct{}
 
 func (stubExistence) Exists(string) (bool, error) { return false, nil }
+
+// ratchetPolicy builds a two-file corpus with 2 violations in a.md and 1 in
+// b.md, so the run total (3) and the worst file (2) differ and each scope can
+// be tested independently.
+func ratchetCorpus() fstest.MapFS {
+	return fstest.MapFS{
+		"a.md": {Data: []byte("TODO one\nTODO two\nclean\n")},
+		"b.md": {Data: []byte("TODO three\n")},
+	}
+}
+
+func ratchetPolicy(t *testing.T, extra string) *policy.Policy {
+	t.Helper()
+	return load(t, "version: 1\nrules:\n  - id: no-todo\n    check: pattern_absent\n    files: [\"**/*.md\"]\n    pattern: \"TODO\"\n"+extra)
+}
+
+// TestRatchetAbsentReportsEverything is the control: without a baseline every
+// violation stands, so the ratchet cannot be silently on.
+func TestRatchetAbsentReportsEverything(t *testing.T) {
+	files := ratchetCorpus()
+	r, err := Run(ratchetPolicy(t, ""), sources(t, files))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(r.Violations) != 3 {
+		t.Errorf("got %d violations, want 3", len(r.Violations))
+	}
+	if len(r.Tolerated) != 0 || len(r.Ratchets) != 0 {
+		t.Errorf("a rule with no baseline produced ratchet state: %+v %+v", r.Tolerated, r.Ratchets)
+	}
+}
+
+// TestRatchetRunScopeAtLimitTolerates pins the boundary as inclusive: the
+// baseline is the count that exists at adoption, so that count must pass.
+func TestRatchetRunScopeAtLimitTolerates(t *testing.T) {
+	files := ratchetCorpus()
+	r, err := Run(ratchetPolicy(t, "    baseline: 3\n"), sources(t, files))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !r.OK() {
+		t.Errorf("got %d failing violations at exactly the baseline, want 0", len(r.Violations))
+	}
+	if len(r.Tolerated) != 3 {
+		t.Errorf("Tolerated = %d, want 3: absorbed findings must stay visible", len(r.Tolerated))
+	}
+	if len(r.Ratchets) != 1 || r.Ratchets[0].Exceeded {
+		t.Fatalf("Ratchets = %+v, want one non-exceeded entry", r.Ratchets)
+	}
+	if got := r.Ratchets[0]; got.Found != 3 || got.Limit != 3 || got.Scope != "run" {
+		t.Errorf("status = %+v, want found 3 limit 3 scope run", got)
+	}
+}
+
+// TestRatchetRunScopeOverLimitReportsAll pins the reference semantics: a count
+// over the limit fails with every violation shown, not just the excess. The
+// engine knows how many exist, never which are new, so handing back an
+// arbitrary subset would be a guess.
+func TestRatchetRunScopeOverLimitReportsAll(t *testing.T) {
+	files := ratchetCorpus()
+	r, err := Run(ratchetPolicy(t, "    baseline: 2\n"), sources(t, files))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(r.Violations) != 3 {
+		t.Errorf("got %d violations, want all 3 reported once the baseline is breached", len(r.Violations))
+	}
+	if len(r.Tolerated) != 0 {
+		t.Errorf("Tolerated = %d, want 0 when the rule failed", len(r.Tolerated))
+	}
+	if len(r.Ratchets) != 1 || !r.Ratchets[0].Exceeded {
+		t.Errorf("Ratchets = %+v, want one exceeded entry", r.Ratchets)
+	}
+}
+
+// TestRatchetPerFileScopeBoundsTheWorstFile proves the two scopes are
+// independent: a total of 3 passes a per-file limit of 2 because no single file
+// carries more than 2.
+func TestRatchetPerFileScopeBoundsTheWorstFile(t *testing.T) {
+	files := ratchetCorpus()
+	r, err := Run(ratchetPolicy(t, "    baseline_per_file: 2\n"), sources(t, files))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !r.OK() {
+		t.Errorf("got %d failing violations, want 0: no file exceeds 2", len(r.Violations))
+	}
+	if got := r.Ratchets[0]; got.Found != 2 || got.Scope != "file" {
+		t.Errorf("status = %+v, want found 2 (the worst file) scope file", got)
+	}
+
+	tight, err := Run(ratchetPolicy(t, "    baseline_per_file: 1\n"), sources(t, files))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(tight.Violations) != 3 {
+		t.Errorf("got %d violations, want 3: a.md breaches a per-file limit of 1", len(tight.Violations))
+	}
+}
+
+// TestRatchetZeroBaselineIsNotAbsent pins that baseline: 0 is a real
+// zero-tolerance ratchet rather than an unset field, which is why the policy
+// carries pointers.
+func TestRatchetZeroBaselineIsNotAbsent(t *testing.T) {
+	files := fstest.MapFS{"a.md": {Data: []byte("clean\n")}}
+	r, err := Run(ratchetPolicy(t, "    baseline: 0\n"), sources(t, files))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(r.Ratchets) != 1 {
+		t.Fatalf("Ratchets = %+v, want one entry: baseline 0 is a declared ratchet", r.Ratchets)
+	}
+	if r.Ratchets[0].Limit != 0 || r.Ratchets[0].Exceeded {
+		t.Errorf("status = %+v, want limit 0 and not exceeded on a clean tree", r.Ratchets[0])
+	}
+}
+
+// TestRatchetOnlyAffectsItsOwnRule guards the blast radius: a baseline on one
+// rule must not absorb another rule's findings.
+func TestRatchetOnlyAffectsItsOwnRule(t *testing.T) {
+	files := fstest.MapFS{"a.md": {Data: []byte("TODO and FIXME\n")}}
+	p := load(t, `version: 1
+rules:
+  - id: no-todo
+    check: pattern_absent
+    files: ["**/*.md"]
+    pattern: "TODO"
+    baseline: 5
+  - id: no-fixme
+    check: pattern_absent
+    files: ["**/*.md"]
+    pattern: "FIXME"
+`)
+	r, err := Run(p, sources(t, files))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(r.Violations) != 1 || r.Violations[0].RuleID != "no-fixme" {
+		t.Errorf("got %+v, want only the unratcheted no-fixme violation", r.Violations)
+	}
+	if len(r.Tolerated) != 1 || r.Tolerated[0].RuleID != "no-todo" {
+		t.Errorf("Tolerated = %+v, want only the ratcheted no-todo violation", r.Tolerated)
+	}
+}

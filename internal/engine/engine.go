@@ -40,6 +40,28 @@ var ErrNotRegularFile = errors.New("engine: not a regular file")
 type Result struct {
 	Violations []rules.Violation
 	Coverage   []RuleCoverage
+	// Tolerated holds the violations a ratchet absorbed. They are real
+	// findings that did not fail the run, kept here rather than dropped so a
+	// caller can show what the baseline is currently hiding: a tolerated
+	// violation must never read as no violation.
+	Tolerated []rules.Violation
+	// Ratchets records, per ratcheted rule, how the count compared to the
+	// declared limits. A rule with no ratchet does not appear.
+	Ratchets []RatchetStatus
+}
+
+// RatchetStatus is what a ratcheted rule counted against its limits.
+type RatchetStatus struct {
+	RuleID string
+	// Found is the number of violations the rule produced across the run.
+	Found int
+	// Limit is the declared tolerance that decided the verdict, and Scope names
+	// which limit it was ("run" or "file"). For the per-file scope Found is the
+	// count in the worst file, since that is what the limit bounds.
+	Limit int
+	Scope  string
+	// Exceeded reports whether this rule failed the run.
+	Exceeded bool
 }
 
 // RuleCoverage records how often a rule was actually evaluated. A rule with
@@ -106,7 +128,54 @@ func RunWith(p *policy.Policy, sources []Source, exists rules.Existence) (Result
 	violations = append(violations, res.wait()...)
 
 	sortViolations(violations)
-	return Result{Violations: violations, Coverage: coverage(p, evaluated)}, nil
+	kept, tolerated, status := applyRatchets(p, violations)
+	return Result{
+		Violations: kept,
+		Coverage:   coverage(p, evaluated),
+		Tolerated:  tolerated,
+		Ratchets:   status,
+	}, nil
+}
+
+// applyRatchets splits the sorted violations into the ones that fail the run
+// and the ones a declared baseline absorbs.
+//
+// A ratchet is decided by count, not by identity: the engine knows how many
+// violations exist, never which are new. So a rule over its limit keeps every
+// violation rather than an arbitrary excess, leaving the author to choose what
+// to remove, and a rule under its limit keeps none.
+//
+// The input must already be sorted, which is what makes the split deterministic
+// for a rule that declares both limits.
+func applyRatchets(p *policy.Policy, sorted []rules.Violation) (kept, tolerated []rules.Violation, status []RatchetStatus) {
+	ratcheted := make(map[string]policy.Ratchet, len(p.Rules))
+	for _, pr := range p.Rules {
+		if !pr.Ratchet.Zero() {
+			ratcheted[pr.Spec.ID] = pr.Ratchet
+		}
+	}
+	if len(ratcheted) == 0 {
+		return sorted, nil, nil
+	}
+
+	total, worst := countPerRule(sorted, ratcheted)
+
+	exceeded := make(map[string]bool, len(ratcheted))
+	for id, r := range ratcheted {
+		st := ratchetVerdict(id, r, total[id], worst[id])
+		exceeded[id] = st.Exceeded
+		status = append(status, st)
+	}
+	sort.Slice(status, func(i, j int) bool { return status[i].RuleID < status[j].RuleID })
+
+	for _, v := range sorted {
+		if _, ok := ratcheted[v.RuleID]; ok && !exceeded[v.RuleID] {
+			tolerated = append(tolerated, v)
+			continue
+		}
+		kept = append(kept, v)
+	}
+	return kept, tolerated, status
 }
 
 func checkFile(p *policy.Policy, src Source, evaluated map[string]int, res *resolver) ([]rules.Violation, error) {
@@ -343,4 +412,47 @@ func skipDir(name string) bool {
 		return true
 	}
 	return false
+}
+
+// countPerRule returns, per ratcheted rule, the total violation count and the
+// count in whichever file carries the most. The two feed the run-scoped and
+// per-file limits respectively.
+func countPerRule(sorted []rules.Violation, ratcheted map[string]policy.Ratchet) (total, worst map[string]int) {
+	total = make(map[string]int, len(ratcheted))
+	worst = make(map[string]int, len(ratcheted))
+	perFile := make(map[string]map[string]int, len(ratcheted))
+	for _, v := range sorted {
+		if _, ok := ratcheted[v.RuleID]; !ok {
+			continue
+		}
+		total[v.RuleID]++
+		byPath, ok := perFile[v.RuleID]
+		if !ok {
+			byPath = map[string]int{}
+			perFile[v.RuleID] = byPath
+		}
+		byPath[v.Path]++
+		if byPath[v.Path] > worst[v.RuleID] {
+			worst[v.RuleID] = byPath[v.Path]
+		}
+	}
+	return total, worst
+}
+
+// ratchetVerdict decides one rule against its declared limits. A rule that
+// declares both fails if either is breached, and the reported scope names the
+// limit that actually decided the verdict.
+func ratchetVerdict(id string, r policy.Ratchet, total, worst int) RatchetStatus {
+	st := RatchetStatus{RuleID: id}
+	switch {
+	case r.Run != nil && total > *r.Run:
+		st.Found, st.Limit, st.Scope, st.Exceeded = total, *r.Run, "run", true
+	case r.PerFile != nil && worst > *r.PerFile:
+		st.Found, st.Limit, st.Scope, st.Exceeded = worst, *r.PerFile, "file", true
+	case r.Run != nil:
+		st.Found, st.Limit, st.Scope = total, *r.Run, "run"
+	default:
+		st.Found, st.Limit, st.Scope = worst, *r.PerFile, "file"
+	}
+	return st
 }

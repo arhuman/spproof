@@ -227,3 +227,105 @@ func TestMixedScopeRenderingIsByteIdenticalAcrossRuns(t *testing.T) {
 		t.Error("two text renderings of the same result differ")
 	}
 }
+
+// TestTextToleratedRunIsNotSilent is the invariant this feature could most
+// easily break: a run whose findings were all absorbed by a baseline must not
+// render identically to a run that found nothing. Silence has to mean nothing
+// was found.
+func TestTextToleratedRunIsNotSilent(t *testing.T) {
+	var clean strings.Builder
+	if err := Text(&clean, engine.Result{}); err != nil {
+		t.Fatalf("Text: %v", err)
+	}
+	if clean.String() != "" {
+		t.Fatalf("a clean result wrote %q, want nothing", clean.String())
+	}
+
+	absorbed := engine.Result{
+		Tolerated: []rules.Violation{{RuleID: "no-todo", Path: "a.md", Line: 1, Column: 1, Message: "m"}},
+		Ratchets:  []engine.RatchetStatus{{RuleID: "no-todo", Found: 1, Limit: 3, Scope: "run"}},
+	}
+	var got strings.Builder
+	if err := Text(&got, absorbed); err != nil {
+		t.Fatalf("Text: %v", err)
+	}
+	if got.String() == "" {
+		t.Fatal("a fully tolerated run wrote nothing, so it reads as clean")
+	}
+	for _, want := range []string{"no-todo", "1", "baseline 3"} {
+		if !strings.Contains(got.String(), want) {
+			t.Errorf("output %q is missing %q", got.String(), want)
+		}
+	}
+}
+
+// TestTextExceededRatchetPrintsNoSummary: once a rule fails, its violations are
+// the message. A summary line saying "tolerated" alongside them would be wrong.
+func TestTextExceededRatchetPrintsNoSummary(t *testing.T) {
+	r := engine.Result{
+		Violations: []rules.Violation{{RuleID: "no-todo", Path: "a.md", Line: 1, Column: 1, Message: "m"}},
+		Ratchets:   []engine.RatchetStatus{{RuleID: "no-todo", Found: 4, Limit: 3, Scope: "run", Exceeded: true}},
+	}
+	var got strings.Builder
+	if err := Text(&got, r); err != nil {
+		t.Fatalf("Text: %v", err)
+	}
+	if strings.Contains(got.String(), "tolerated") {
+		t.Errorf("output %q calls a failing rule tolerated", got.String())
+	}
+}
+
+// TestJSONCarriesToleratedSeparately pins the split: results is the set that
+// failed, tolerated is what the baseline absorbed, and both are present.
+func TestJSONCarriesToleratedSeparately(t *testing.T) {
+	r := engine.Result{
+		Coverage:  []engine.RuleCoverage{{RuleID: "no-todo", Check: "pattern_absent", EvaluatedFiles: 1}},
+		Tolerated: []rules.Violation{{RuleID: "no-todo", Path: "a.md", Line: 2, Column: 3, Message: "m", Match: "TODO"}},
+		Ratchets:  []engine.RatchetStatus{{RuleID: "no-todo", Found: 1, Limit: 3, Scope: "run"}},
+	}
+	var buf strings.Builder
+	if err := JSON(&buf, r); err != nil {
+		t.Fatalf("JSON: %v", err)
+	}
+	var doc struct {
+		Rules []struct {
+			ID      string `json:"id"`
+			Ratchet *struct {
+				Found    int    `json:"found"`
+				Limit    int    `json:"limit"`
+				Scope    string `json:"scope"`
+				Exceeded bool   `json:"exceeded"`
+			} `json:"ratchet"`
+		} `json:"rules"`
+		Results   []json.RawMessage `json:"results"`
+		Tolerated []json.RawMessage `json:"tolerated"`
+	}
+	if err := json.Unmarshal([]byte(buf.String()), &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(doc.Results) != 0 {
+		t.Errorf("results = %d, want 0: nothing failed", len(doc.Results))
+	}
+	if len(doc.Tolerated) != 1 {
+		t.Errorf("tolerated = %d, want 1", len(doc.Tolerated))
+	}
+	if doc.Rules[0].Ratchet == nil {
+		t.Fatal("the rule catalogue carries no ratchet status")
+	}
+	if got := doc.Rules[0].Ratchet; got.Found != 1 || got.Limit != 3 || got.Scope != "run" || got.Exceeded {
+		t.Errorf("ratchet = %+v, want found 1 limit 3 scope run not exceeded", got)
+	}
+}
+
+// TestJSONOmitsRatchetWhenUnused keeps the document unchanged for a policy that
+// declares no baseline.
+func TestJSONOmitsRatchetWhenUnused(t *testing.T) {
+	r := engine.Result{Coverage: []engine.RuleCoverage{{RuleID: "r", Check: "pattern_absent"}}}
+	var buf strings.Builder
+	if err := JSON(&buf, r); err != nil {
+		t.Fatalf("JSON: %v", err)
+	}
+	if strings.Contains(buf.String(), "ratchet") || strings.Contains(buf.String(), "tolerated") {
+		t.Errorf("output carries ratchet fields for a policy with none: %s", buf.String())
+	}
+}

@@ -33,6 +33,7 @@ var (
 	ErrMissingFiles  = errors.New("policy: rule files is required")
 	ErrBadGlob       = errors.New("policy: invalid file glob")
 	ErrMalformedYAML = errors.New("policy: malformed YAML")
+	ErrBadBaseline   = errors.New("policy: baseline must not be negative")
 )
 
 // Policy is a loaded, validated and compiled rule set. Its regexes are compiled
@@ -46,7 +47,32 @@ type Rule struct {
 	Spec    rules.Spec
 	Files   []string
 	Factory rules.Factory
+	Ratchet Ratchet
 }
+
+// Ratchet tolerates a declared number of existing violations so a rule can be
+// adopted on a tree that does not yet satisfy it. Only an increase fails, which
+// is what lets a policy gate new work without a cleanup landing first.
+//
+// A count is the whole verdict: the engine knows how many violations exist, not
+// which of them are new. When the count is over the limit every violation is
+// reported, not just the excess, so the author chooses which to remove rather
+// than being handed an arbitrary subset.
+//
+// Both limits are declared in the policy, never discovered from a state file.
+// The engine reads no ambient state and writes nothing, so a verdict stays a
+// function of the tree and the policy alone.
+type Ratchet struct {
+	// Run is the tolerated total across every file, when set.
+	Run *int
+	// PerFile is the tolerated count within any single file, when set. It is
+	// applied per file, so it bounds the worst file rather than the total.
+	PerFile *int
+}
+
+// Zero reports whether no ratchet was declared, in which case every violation
+// stands.
+func (r Ratchet) Zero() bool { return r.Run == nil && r.PerFile == nil }
 
 // Matches reports whether the rule's file globs select this path. It answers
 // only the path question; whether the check can decide the file's type is a
@@ -73,6 +99,8 @@ type ruleNode struct {
 	Max      int      `yaml:"max"`
 	Message  string   `yaml:"message"`
 	SkipCode bool     `yaml:"skip_code"`
+	Baseline *int     `yaml:"baseline"`
+	PerFile  *int     `yaml:"baseline_per_file"`
 }
 
 // Load reads and validates a policy file from disk.
@@ -156,7 +184,15 @@ func compile(n ruleNode, idx int) (Rule, error) {
 	if err := factory.Validate(spec); err != nil {
 		return Rule{}, fmt.Errorf("policy: rule %q: %w", n.ID, err)
 	}
-	return Rule{Spec: spec, Files: n.Files, Factory: factory}, nil
+	if err := validateBaselines(n); err != nil {
+		return Rule{}, err
+	}
+	return Rule{
+		Spec:    spec,
+		Files:   n.Files,
+		Factory: factory,
+		Ratchet: Ratchet{Run: n.Baseline, PerFile: n.PerFile},
+	}, nil
 }
 
 // classifyYAMLError maps the decoder's unknown-field failure onto a sentinel.
@@ -178,4 +214,18 @@ func classifyYAMLError(err error) error {
 // KnownFields(true), which is the only signal it gives for an unknown field.
 func isUnknownFieldMessage(msg string) bool {
 	return strings.Contains(msg, "not found in type")
+}
+
+// validateBaselines refuses a negative tolerance. Clamping it to zero would run
+// a stricter rule than the policy declared without saying so.
+func validateBaselines(n ruleNode) error {
+	for _, b := range []struct {
+		field string
+		val   *int
+	}{{"baseline", n.Baseline}, {"baseline_per_file", n.PerFile}} {
+		if b.val != nil && *b.val < 0 {
+			return fmt.Errorf("%w: rule %q: %s is %d", ErrBadBaseline, n.ID, b.field, *b.val)
+		}
+	}
+	return nil
 }

@@ -30,16 +30,29 @@ func (patternAbsentFactory) Validate(s Spec) error {
 }
 
 type patternAbsent struct {
-	spec Spec
-	path string
+	spec  Spec
+	path  string
+	class LineClass
 }
 
 func (r *patternAbsent) Init(f FileMeta) { r.path = f.Path }
 
+// OnClass records the current line's prose/code split for the OnLine that
+// follows it. It is a no-op unless the policy set skip_code.
+func (r *patternAbsent) OnClass(c LineClass) { r.class = c }
+
 // OnLine reports one violation per match, so a line containing the forbidden
 // pattern three times fails three times.
+//
+// Under skip_code the pattern runs against a masked copy in which code is
+// blanked. Offsets survive masking, so the column and the reported match are
+// still taken from the line the reader sees rather than from the copy.
 func (r *patternAbsent) OnLine(n int, text string) []Violation {
-	locs := r.spec.Pattern.FindAllStringIndex(text, -1)
+	subject := text
+	if r.spec.SkipCode {
+		subject = r.class.Masked(text)
+	}
+	locs := r.spec.Pattern.FindAllStringIndex(subject, -1)
 	if locs == nil {
 		return nil
 	}

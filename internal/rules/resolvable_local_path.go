@@ -81,8 +81,10 @@ func (resolvableLocalPathFactory) New(s Spec) Rule { return &resolvableLocalPath
 // grammar does not define.
 func (resolvableLocalPathFactory) AppliesTo(t FileType) bool { return t == TypeMarkdown }
 
-// Validate accepts any spec: the check takes neither a pattern nor a maximum.
-func (resolvableLocalPathFactory) Validate(Spec) error { return nil }
+// Validate takes no pattern and no maximum. It rejects skip_code because the
+// check already ignores code unconditionally: accepting the field would let a
+// policy believe it turned something on that was never optional.
+func (resolvableLocalPathFactory) Validate(s Spec) error { return rejectSkipCode(s) }
 
 // resolvableLocalPath proves that every local relative link target in a
 // markdown file resolves to something that exists.
@@ -100,6 +102,7 @@ type resolvableLocalPath struct {
 	spec    Spec
 	path    string
 	dir     string
+	class   LineClass
 	pending []Candidate
 }
 
@@ -108,11 +111,21 @@ func (r *resolvableLocalPath) Init(f FileMeta) {
 	r.dir = path.Dir(f.Path)
 }
 
+// OnClass records the current line's prose/code split for the OnLine that
+// follows it.
+func (r *resolvableLocalPath) OnClass(c LineClass) { r.class = c }
+
 // OnLine records a candidate per checkable link target and returns no
 // violations: it cannot decide one without the filesystem, and consulting it
 // here would block the reader.
+//
+// Links are read from a masked copy in which code is blanked, unconditionally
+// rather than behind an option. A link inside a fence is an example, not a
+// reference: a Go generic (`[T any](slice []T)`) has the shape of a link and
+// names no file, so following it reports a target the document never claimed.
+// Masking preserves offsets, so the column still points into the real line.
 func (r *resolvableLocalPath) OnLine(n int, text string) []Violation {
-	for _, l := range extractLinks(text) {
+	for _, l := range extractLinks(r.class.Masked(text)) {
 		target, ok := resolvableTarget(l.target)
 		if !ok {
 			continue
@@ -156,7 +169,8 @@ var refDefinition = regexp.MustCompile(`^\s*\[[^\]]+\]:\s*(\S+)`)
 
 // extractLinks returns every markdown link target on a line with its byte
 // offset. It is a regex over one line, not a parser: a link split across lines
-// is not seen, and neither syntax is recognized inside a fenced code block.
+// is not seen. Fenced and code-span content is already blanked by the caller,
+// so nothing here needs to know about code.
 func extractLinks(text string) []link {
 	var out []link
 	if m := refDefinition.FindStringSubmatchIndex(text); m != nil {

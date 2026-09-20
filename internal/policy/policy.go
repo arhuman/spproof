@@ -66,12 +66,13 @@ type file struct {
 }
 
 type ruleNode struct {
-	ID      string   `yaml:"id"`
-	Check   string   `yaml:"check"`
-	Files   []string `yaml:"files"`
-	Pattern string   `yaml:"pattern"`
-	Max     int      `yaml:"max"`
-	Message string   `yaml:"message"`
+	ID       string   `yaml:"id"`
+	Check    string   `yaml:"check"`
+	Files    []string `yaml:"files"`
+	Pattern  string   `yaml:"pattern"`
+	Max      int      `yaml:"max"`
+	Message  string   `yaml:"message"`
+	SkipCode bool     `yaml:"skip_code"`
 }
 
 // Load reads and validates a policy file from disk.
@@ -144,7 +145,7 @@ func compile(n ruleNode, idx int) (Rule, error) {
 		}
 	}
 
-	spec := rules.Spec{ID: n.ID, Check: n.Check, Max: n.Max, Message: n.Message}
+	spec := rules.Spec{ID: n.ID, Check: n.Check, Max: n.Max, Message: n.Message, SkipCode: n.SkipCode}
 	if n.Pattern != "" {
 		re, err := regexp.Compile(n.Pattern)
 		if err != nil {

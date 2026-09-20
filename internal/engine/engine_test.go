@@ -531,3 +531,33 @@ func TestLineTooLong(t *testing.T) {
 		t.Errorf("got %v, want ErrLineTooLong", err)
 	}
 }
+
+// TestFenceAwareLinkRuleIgnoresCode is the engine-level proof of the capability
+// this rule was blocked on: a Go generic inside a fence has the shape of a
+// markdown link and names no file, so following it reports a target the
+// document never claimed. The real broken link on the next line still reports.
+func TestFenceAwareLinkRuleIgnoresCode(t *testing.T) {
+	files := fstest.MapFS{
+		"doc.md": {Data: []byte("```go\n[T any](slice []T)\n```\n[gone](./missing.md)\n")},
+	}
+	p := load(t, "version: 1\nrules:\n  - id: links\n    check: resolvable_local_path\n    files: [\"**/*.md\"]\n")
+	r, err := RunWith(p, sources(t, files), stubExistence{})
+	if err != nil {
+		t.Fatalf("RunWith: %v", err)
+	}
+	if len(r.Violations) != 1 {
+		for _, v := range r.Violations {
+			t.Logf("got %s:%d %s", v.Path, v.Line, v.Message)
+		}
+		t.Fatalf("got %d violations, want 1: only the real link is missing", len(r.Violations))
+	}
+	if r.Violations[0].Line != 4 {
+		t.Errorf("Line = %d, want 4 (the prose link, not the fenced generic)", r.Violations[0].Line)
+	}
+}
+
+// stubExistence reports every path as absent, so any candidate the rule emits
+// becomes a violation and the test measures what was emitted.
+type stubExistence struct{}
+
+func (stubExistence) Exists(string) (bool, error) { return false, nil }

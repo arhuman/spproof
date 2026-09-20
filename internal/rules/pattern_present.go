@@ -18,7 +18,7 @@ func (patternPresentFactory) Validate(s Spec) error {
 	if s.Pattern == nil {
 		return fmt.Errorf("%w: %q", ErrPatternRequired, s.Check)
 	}
-	return nil
+	return rejectSkipCode(s)
 }
 
 type patternPresent struct {

@@ -18,7 +18,7 @@ func (fileLineMaxFactory) Validate(s Spec) error {
 	if s.Max <= 0 {
 		return fmt.Errorf("%w: %q got max %d", ErrMaxRequired, s.Check, s.Max)
 	}
-	return nil
+	return rejectSkipCode(s)
 }
 
 type fileLineMax struct {

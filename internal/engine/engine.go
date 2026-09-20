@@ -124,8 +124,14 @@ func checkFile(p *policy.Policy, src Source, evaluated map[string]int, res *reso
 	defer rc.Close()
 
 	contextual := contextualRules(active)
+	// Classification is markdown-specific and costs a scan of every line, so it
+	// is computed only when some active rule actually consumes it.
+	aware := classAwareRules(active)
+	if meta.Type != rules.TypeMarkdown {
+		aware = nil
+	}
 
-	out, err := scanLines(rc, active, contextual, res)
+	out, err := scanLines(rc, active, contextual, aware, res)
 	if err != nil {
 		if errors.Is(err, bufio.ErrTooLong) {
 			return nil, fmt.Errorf("%w: %s", ErrLineTooLong, src.Path)
@@ -162,6 +168,18 @@ func activeRules(p *policy.Policy, src Source, meta rules.FileMeta, evaluated ma
 	return active
 }
 
+// classAwareRules collects the rules that consume a line's prose/code split, so
+// the classifier runs only when something reads it.
+func classAwareRules(active []rules.Rule) []rules.ClassAware {
+	var aware []rules.ClassAware
+	for _, r := range active {
+		if c, ok := r.(rules.ClassAware); ok {
+			aware = append(aware, c)
+		}
+	}
+	return aware
+}
+
 func contextualRules(active []rules.Rule) []rules.Contextual {
 	contextual := make([]rules.Contextual, 0, len(active))
 	for _, r := range active {
@@ -175,12 +193,21 @@ func contextualRules(active []rules.Rule) []rules.Contextual {
 // scanLines feeds every line to every active rule and dispatches contextual
 // candidates as they appear. The returned error is the scanner's, unwrapped, so
 // the caller can distinguish a too-long line from a read failure.
-func scanLines(rc io.Reader, active []rules.Rule, contextual []rules.Contextual, res *resolver) ([]rules.Violation, error) {
+func scanLines(rc io.Reader, active []rules.Rule, contextual []rules.Contextual, aware []rules.ClassAware, res *resolver) ([]rules.Violation, error) {
 	var out []rules.Violation
+	var cls rules.Classifier
 	sc := bufio.NewScanner(rc)
 	sc.Buffer(make([]byte, 0, 64*1024), MaxLineLength)
 	for n := 1; sc.Scan(); n++ {
 		line := sc.Text()
+		// Classify once per line and hand the same answer to every aware rule,
+		// so two rules cannot disagree about where a fence ends.
+		if len(aware) > 0 {
+			c := cls.Classify(line)
+			for _, a := range aware {
+				a.OnClass(c)
+			}
+		}
 		for _, r := range active {
 			out = append(out, r.OnLine(n, line)...)
 		}

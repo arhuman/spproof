@@ -7,6 +7,7 @@
 package rules
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -69,6 +70,27 @@ type Rule interface {
 	Finish() []Violation
 }
 
+// ErrSkipCodeUnsupported is returned by Validate when a policy sets skip_code
+// on a check that cannot honor it. Ignoring the field silently would run a
+// narrower rule than the policy asked for and report that it held, which is the
+// one outcome this tool exists to prevent.
+var ErrSkipCodeUnsupported = errors.New("rules: check does not support skip_code")
+
+// ClassAware is the optional half of the rule contract, implemented by a check
+// whose verdict depends on whether a line is prose or code.
+//
+// The engine calls OnClass immediately before OnLine for the same line, so a
+// rule reads the class from its own field. A pure rule implements nothing extra
+// and is unaffected. The class is computed once per line by the engine rather
+// than by each rule, so two rules cannot disagree about where a fence ends,
+// which is what keeps output deterministic across rule sets.
+//
+// The class of a line is meaningful only for a file type with a fence concept;
+// for every other type the engine passes the zero LineClass, which is prose.
+type ClassAware interface {
+	OnClass(c LineClass)
+}
+
 // Spec is the validated, compiled configuration of one policy rule. Pattern is
 // nil for checks that take no regex. It is compiled once at policy load and
 // shared across every file, so a rule implementation must treat it as read-only.
@@ -82,6 +104,11 @@ type Spec struct {
 	// message can say what matched but never why it is banned or what to write
 	// instead, which is the half a reader acting on the violation needs.
 	Message string
+
+	// SkipCode confines the rule to prose, ignoring fenced blocks and inline
+	// code spans. A rule about writing is wrong about code: a document that
+	// bans a word has to name that word, and it names it in a code span.
+	SkipCode bool
 }
 
 // Msg returns the policy's own wording when it set one, and the generated text
@@ -137,4 +164,16 @@ func Names() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// rejectSkipCode refuses skip_code for a check that does not honor it.
+//
+// Silently ignoring the field would run a narrower rule than the policy
+// declared and then report that it held, which is exactly the outcome strict
+// loading exists to prevent.
+func rejectSkipCode(s Spec) error {
+	if s.SkipCode {
+		return fmt.Errorf("%w: %q", ErrSkipCodeUnsupported, s.Check)
+	}
+	return nil
 }

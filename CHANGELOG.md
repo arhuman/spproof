@@ -9,6 +9,7 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 - Six checks: pattern_absent, pattern_present, comment_line_char_max, comment_line_consecutive_max, file_line_max, and resolvable_local_path (a contextual check).
 - Strict policy loader with clear errors for malformed or ambiguous policy files.
 - Optional `message:` on a rule, replacing the generated violation text so a policy can say why a rule exists and what to write instead.
+- Markdown fence and code-span awareness: `resolvable_local_path` ignores links inside code unconditionally, and `pattern_absent` opts in with `skip_code: true`.
 - Text and SARIF-shaped JSON output formats.
 - Exit codes: 0 when clean, 1 on violations, 2 when the engine could not run.
 - Benchmark harness with a committed 10000 line corpus, plus CI gates on throughput and on end to end hook latency.

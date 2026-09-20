@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"errors"
 	"regexp"
 	"testing"
 )
@@ -70,5 +71,91 @@ func TestCandidateCustomMessage(t *testing.T) {
 	c.Message = ""
 	if got := c.Violation(nil).Message; got == "" {
 		t.Error("empty Message produced no generated text")
+	}
+}
+
+// TestSkipCodeRejectedByChecksThatIgnoreIt pins the refusal. Accepting the
+// field and then ignoring it would run a narrower rule than the policy
+// declared and report that it held, which strict loading exists to prevent.
+func TestSkipCodeRejectedByChecksThatIgnoreIt(t *testing.T) {
+	specs := map[string]Spec{
+		"file_line_max":                {Check: "file_line_max", Max: 10},
+		"pattern_present":              {Check: "pattern_present", Pattern: regexp.MustCompile("x")},
+		"comment_line_char_max":        {Check: "comment_line_char_max", Max: 10},
+		"comment_line_consecutive_max": {Check: "comment_line_consecutive_max", Max: 10},
+		"resolvable_local_path":        {Check: "resolvable_local_path"},
+	}
+	for name, base := range specs {
+		t.Run(name, func(t *testing.T) {
+			f, ok := Lookup(name)
+			if !ok {
+				t.Fatalf("%s is not registered", name)
+			}
+			if err := f.Validate(base); err != nil {
+				t.Fatalf("Validate without skip_code: %v", err)
+			}
+			base.SkipCode = true
+			if err := f.Validate(base); !errors.Is(err, ErrSkipCodeUnsupported) {
+				t.Errorf("Validate with skip_code = %v, want ErrSkipCodeUnsupported", err)
+			}
+		})
+	}
+}
+
+// TestSkipCodeAcceptedByPatternAbsent is the other half: the one check that
+// honors the field must not reject it.
+func TestSkipCodeAcceptedByPatternAbsent(t *testing.T) {
+	f, ok := Lookup("pattern_absent")
+	if !ok {
+		t.Fatal("pattern_absent is not registered")
+	}
+	spec := Spec{Check: "pattern_absent", Pattern: regexp.MustCompile("x"), SkipCode: true}
+	if err := f.Validate(spec); err != nil {
+		t.Errorf("Validate: %v, want nil", err)
+	}
+}
+
+// TestPatternAbsentSkipsCode walks the rule end to end: a match inside a code
+// span is ignored while one in prose on the same line still reports, and the
+// reported column points into the original line rather than the masked copy.
+func TestPatternAbsentSkipsCode(t *testing.T) {
+	f, _ := Lookup("pattern_absent")
+	spec := Spec{ID: "no-todo", Check: "pattern_absent", Pattern: regexp.MustCompile("TODO"), SkipCode: true}
+	r := f.New(spec)
+	r.Init(FileMeta{Path: "a.md", Type: TypeMarkdown})
+
+	text := "`TODO` is quoted but TODO is not"
+	aware, ok := r.(ClassAware)
+	if !ok {
+		t.Fatal("pattern_absent does not implement ClassAware")
+	}
+	var c Classifier
+	aware.OnClass(c.Classify(text))
+
+	v := r.OnLine(1, text)
+	if len(v) != 1 {
+		t.Fatalf("got %d violations, want 1: the code span must be ignored", len(v))
+	}
+	wantCol := len([]rune("`TODO` is quoted but ")) + 1
+	if v[0].Column != wantCol {
+		t.Errorf("Column = %d, want %d: the column must point into the real line", v[0].Column, wantCol)
+	}
+	if v[0].Match != "TODO" {
+		t.Errorf("Match = %q, want TODO from the original text", v[0].Match)
+	}
+}
+
+// TestPatternAbsentWithoutSkipCodeIsUnchanged pins the default: a policy that
+// did not ask for prose-only sees exactly what it saw before.
+func TestPatternAbsentWithoutSkipCodeIsUnchanged(t *testing.T) {
+	f, _ := Lookup("pattern_absent")
+	spec := Spec{ID: "no-todo", Check: "pattern_absent", Pattern: regexp.MustCompile("TODO")}
+	r := f.New(spec)
+	r.Init(FileMeta{Path: "a.md", Type: TypeMarkdown})
+
+	text := "`TODO` is quoted but TODO is not"
+	r.(ClassAware).OnClass(LineClass{Fenced: true})
+	if v := r.OnLine(1, text); len(v) != 2 {
+		t.Errorf("got %d violations, want 2: without skip_code the class is ignored", len(v))
 	}
 }

@@ -115,6 +115,86 @@ func TestSkipCodeAcceptedByPatternAbsent(t *testing.T) {
 	}
 }
 
+// TestPatternRejectedByChecksThatIgnoreIt pins the same refusal for pattern.
+// A check that never reads Spec.Pattern must refuse one: honoring the field
+// nowhere and accepting it here would let a policy declare a constraint the
+// engine never applies, then report that the rule held.
+func TestPatternRejectedByChecksThatIgnoreIt(t *testing.T) {
+	specs := map[string]Spec{
+		"file_line_max":                {Check: "file_line_max", Max: 10},
+		"comment_line_char_max":        {Check: "comment_line_char_max", Max: 10},
+		"comment_line_consecutive_max": {Check: "comment_line_consecutive_max", Max: 10},
+		"resolvable_local_path":        {Check: "resolvable_local_path"},
+	}
+	for name, base := range specs {
+		t.Run(name, func(t *testing.T) {
+			f, ok := Lookup(name)
+			if !ok {
+				t.Fatalf("%s is not registered", name)
+			}
+			if err := f.Validate(base); err != nil {
+				t.Fatalf("Validate without pattern: %v", err)
+			}
+			base.Pattern = regexp.MustCompile("ignored")
+			if err := f.Validate(base); !errors.Is(err, ErrPatternUnsupported) {
+				t.Errorf("Validate with pattern = %v, want ErrPatternUnsupported", err)
+			}
+		})
+	}
+}
+
+// TestMaxRejectedByChecksThatIgnoreIt is the third field on the same footing.
+// Max is the one field whose absence is indistinguishable from a zero, so a
+// check that ignores it can only refuse a positive one.
+func TestMaxRejectedByChecksThatIgnoreIt(t *testing.T) {
+	specs := map[string]Spec{
+		"pattern_absent":        {Check: "pattern_absent", Pattern: regexp.MustCompile("x")},
+		"pattern_present":       {Check: "pattern_present", Pattern: regexp.MustCompile("x")},
+		"resolvable_local_path": {Check: "resolvable_local_path"},
+	}
+	for name, base := range specs {
+		t.Run(name, func(t *testing.T) {
+			f, ok := Lookup(name)
+			if !ok {
+				t.Fatalf("%s is not registered", name)
+			}
+			if err := f.Validate(base); err != nil {
+				t.Fatalf("Validate without max: %v", err)
+			}
+			base.Max = 42
+			if err := f.Validate(base); !errors.Is(err, ErrMaxUnsupported) {
+				t.Errorf("Validate with max = %v, want ErrMaxUnsupported", err)
+			}
+		})
+	}
+}
+
+// TestFieldsAcceptedByTheChecksThatReadThem is the other half of both tables:
+// the refusals must not spread to the checks the fields belong to.
+func TestFieldsAcceptedByTheChecksThatReadThem(t *testing.T) {
+	ok := []struct {
+		name string
+		spec Spec
+	}{
+		{"pattern_absent", Spec{Check: "pattern_absent", Pattern: regexp.MustCompile("x")}},
+		{"pattern_present", Spec{Check: "pattern_present", Pattern: regexp.MustCompile("x")}},
+		{"file_line_max", Spec{Check: "file_line_max", Max: 10}},
+		{"comment_line_char_max", Spec{Check: "comment_line_char_max", Max: 10}},
+		{"comment_line_consecutive_max", Spec{Check: "comment_line_consecutive_max", Max: 10}},
+	}
+	for _, c := range ok {
+		t.Run(c.name, func(t *testing.T) {
+			f, found := Lookup(c.name)
+			if !found {
+				t.Fatalf("%s is not registered", c.name)
+			}
+			if err := f.Validate(c.spec); err != nil {
+				t.Errorf("Validate: %v, want nil", err)
+			}
+		})
+	}
+}
+
 // TestPatternAbsentSkipsCode walks the rule end to end: a match inside a code
 // span is ignored while one in prose on the same line still reports, and the
 // reported column points into the original line rather than the masked copy.

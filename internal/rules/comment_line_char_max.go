@@ -27,10 +27,7 @@ func (commentLineCharMaxFactory) AppliesTo(t FileType) bool {
 }
 
 func (commentLineCharMaxFactory) Validate(s Spec) error {
-	if s.Max <= 0 {
-		return fmt.Errorf("%w: %q got max %d", ErrMaxRequired, s.Check, s.Max)
-	}
-	return rejectSkipCode(s)
+	return requireMaxOnly(s)
 }
 
 type commentLineCharMax struct {

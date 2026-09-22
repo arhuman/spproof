@@ -14,12 +14,7 @@ func (fileLineMaxFactory) New(s Spec) Rule { return &fileLineMax{spec: s} }
 // syntax.
 func (fileLineMaxFactory) AppliesTo(FileType) bool { return true }
 
-func (fileLineMaxFactory) Validate(s Spec) error {
-	if s.Max <= 0 {
-		return fmt.Errorf("%w: %q got max %d", ErrMaxRequired, s.Check, s.Max)
-	}
-	return rejectSkipCode(s)
-}
+func (fileLineMaxFactory) Validate(s Spec) error { return requireMaxOnly(s) }
 
 type fileLineMax struct {
 	spec  Spec

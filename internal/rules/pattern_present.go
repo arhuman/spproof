@@ -18,6 +18,9 @@ func (patternPresentFactory) Validate(s Spec) error {
 	if s.Pattern == nil {
 		return fmt.Errorf("%w: %q", ErrPatternRequired, s.Check)
 	}
+	if err := rejectMax(s); err != nil {
+		return err
+	}
 	return rejectSkipCode(s)
 }
 

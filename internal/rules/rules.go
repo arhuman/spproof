@@ -70,11 +70,16 @@ type Rule interface {
 	Finish() []Violation
 }
 
-// ErrSkipCodeUnsupported is returned by Validate when a policy sets skip_code
-// on a check that cannot honor it. Ignoring the field silently would run a
-// narrower rule than the policy asked for and report that it held, which is the
-// one outcome this tool exists to prevent.
-var ErrSkipCodeUnsupported = errors.New("rules: check does not support skip_code")
+// Refusals for a field set on a check that never reads it. Ignoring one
+// silently would run a different rule than the policy asked for and report that
+// it held, which is the one outcome this tool exists to prevent. Strict loading
+// already rejects a field no check knows; these reject a known field on the
+// wrong check, which is the same failure in a shape the decoder cannot see.
+var (
+	ErrSkipCodeUnsupported = errors.New("rules: check does not support skip_code")
+	ErrPatternUnsupported  = errors.New("rules: check does not take a pattern")
+	ErrMaxUnsupported      = errors.New("rules: check does not take a max")
+)
 
 // ClassAware is the optional half of the rule contract, implemented by a check
 // whose verdict depends on whether a line is prose or code.
@@ -174,6 +179,42 @@ func Names() []string {
 func rejectSkipCode(s Spec) error {
 	if s.SkipCode {
 		return fmt.Errorf("%w: %q", ErrSkipCodeUnsupported, s.Check)
+	}
+	return nil
+}
+
+// rejectPattern refuses a pattern for a check that never reads one.
+func rejectPattern(s Spec) error {
+	if s.Pattern != nil {
+		return fmt.Errorf("%w: %q", ErrPatternUnsupported, s.Check)
+	}
+	return nil
+}
+
+// requireMaxOnly validates a check whose whole configuration is a positive max:
+// the bound is mandatory, and a pattern or skip_code alongside it is a field the
+// check will never read. The three max-taking checks share it so a new refusal
+// cannot be added to one and forgotten on the others.
+func requireMaxOnly(s Spec) error {
+	if s.Max <= 0 {
+		return fmt.Errorf("%w: %q got max %d", ErrMaxRequired, s.Check, s.Max)
+	}
+	if err := rejectPattern(s); err != nil {
+		return err
+	}
+	return rejectSkipCode(s)
+}
+
+// rejectMax refuses a max for a check that never reads one.
+//
+// It can only refuse a positive value: Max is a plain int, so a policy that
+// omits the field and one that writes "max: 0" arrive here identically. Every
+// check that does read Max requires it to be positive, so no policy can mean
+// anything by a zero today, and the ambiguity stays invisible. A check wanting a
+// meaningful zero has to make presence explicit first.
+func rejectMax(s Spec) error {
+	if s.Max != 0 {
+		return fmt.Errorf("%w: %q", ErrMaxUnsupported, s.Check)
 	}
 	return nil
 }

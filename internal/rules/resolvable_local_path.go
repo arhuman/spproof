@@ -81,10 +81,19 @@ func (resolvableLocalPathFactory) New(s Spec) Rule { return &resolvableLocalPath
 // grammar does not define.
 func (resolvableLocalPathFactory) AppliesTo(t FileType) bool { return t == TypeMarkdown }
 
-// Validate takes no pattern and no maximum. It rejects skip_code because the
-// check already ignores code unconditionally: accepting the field would let a
-// policy believe it turned something on that was never optional.
-func (resolvableLocalPathFactory) Validate(s Spec) error { return rejectSkipCode(s) }
+// Validate refuses a pattern and a maximum, which this check never reads: the
+// link grammar is fixed and there is nothing to bound. It rejects skip_code
+// because the check already ignores code unconditionally, so accepting the field
+// would let a policy believe it turned something on that was never optional.
+func (resolvableLocalPathFactory) Validate(s Spec) error {
+	if err := rejectPattern(s); err != nil {
+		return err
+	}
+	if err := rejectMax(s); err != nil {
+		return err
+	}
+	return rejectSkipCode(s)
+}
 
 // resolvableLocalPath proves that every local relative link target in a
 // markdown file resolves to something that exists.

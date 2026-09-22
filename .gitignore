@@ -1,3 +1,10 @@
 # Build artifacts, the same set `make clean` removes.
 bin/
 coverage.out
+
+# Agent working context, private to whoever runs the agent. Ignored here rather
+# than only in a global gitignore, so a clone excludes them too.
+.claude/
+.opencode/
+CLAUDE.md
+AGENTS.md

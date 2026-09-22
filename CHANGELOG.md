@@ -6,7 +6,7 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ### Added
 - `spproof check` CLI: proves a declared set of static checks holds over a file or a tree, for CI jobs, git hooks, and agents.
-- Six checks: pattern_absent, pattern_present, comment_line_char_max, comment_line_consecutive_max, file_line_max, and resolvable_local_path (a contextual check).
+- Seven checks: pattern_absent, pattern_present, comment_line_char_max, comment_line_consecutive_max, file_line_max, yaml_frontmatter, and resolvable_local_path (a contextual check).
 - Strict policy loader with clear errors for malformed or ambiguous policy files.
 - Optional `message:` on a rule, replacing the generated violation text so a policy can say why a rule exists and what to write instead.
 - Markdown fence and code-span awareness: `resolvable_local_path` ignores links inside code unconditionally, and `pattern_absent` opts in with `skip_code: true`.
@@ -18,11 +18,16 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 - Benchmark harness with a committed 10000 line corpus, plus CI gates on throughput and on end to end hook latency.
 - Contributing guide and security policy.
 - golangci-lint v2 configuration with gosec enabled.
+- MIT license.
+- README covering install, policy syntax, the check table, baselines, output formats, CI wiring, and release signature verification.
 
 ### Changed
+- `go.mod` declares a `go 1.25.0` floor with a `toolchain go1.26.6` line, so the module imports on the oldest supported release instead of requiring the toolchain it was built with.
 - CI runs the test suite on the go.mod floor and on stable, and splits lint, dogfood and SAST into their own jobs. Action pins moved to checkout v7, setup-go v7, cosign-installer v4 and goreleaser-action v7.
 - CodeQL SAST job added.
-- `go.mod` declares a `go 1.25.0` floor with a `toolchain go1.26.6` line, so the module imports on the oldest supported release instead of requiring the toolchain it was built with.
+- `.spproof.yml` sets `skip_code: true` on its own em-dash rule: the README documents the rule, so its examples contain the characters the rule forbids.
+- SECURITY.md and CONTRIBUTING.md carry the project's real contact, setup and make targets instead of the scaffold's TODO placeholders.
+- The check count above read six while seven were registered.
 
 ### Fixed
 - Version now resolves from build info when ldflags stamped nothing.

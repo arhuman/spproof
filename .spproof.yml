@@ -9,3 +9,6 @@ rules:
       - "docs/**/*.md"
     with:
       pattern: "[—–]"
+      # The README documents this very rule, so its examples contain the
+      # characters the rule forbids. Prose is the subject; code is not.
+      skip_code: true

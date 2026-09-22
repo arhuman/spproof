@@ -20,6 +20,8 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 - golangci-lint v2 configuration with gosec enabled.
 
 ### Changed
+- CI runs the test suite on the go.mod floor and on stable, and splits lint, dogfood and SAST into their own jobs. Action pins moved to checkout v7, setup-go v7, cosign-installer v4 and goreleaser-action v7.
+- CodeQL SAST job added.
 - `go.mod` declares a `go 1.25.0` floor with a `toolchain go1.26.6` line, so the module imports on the oldest supported release instead of requiring the toolchain it was built with.
 
 ### Fixed

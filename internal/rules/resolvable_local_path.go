@@ -40,10 +40,14 @@ type Candidate struct {
 // confirmed. A nil err means the target was demonstrably absent; a non-nil err
 // means existence could not be established at all, which fails identically and
 // is distinguished only here, in the message.
+//
+// The wording says "path" rather than "link": a policy may extract targets with
+// its own pattern, and a //go:embed argument or a bare filename in prose is not
+// a link. Naming it one would describe the file back to the reader wrongly.
 func (c Candidate) Violation(err error) Violation {
-	msg := fmt.Sprintf("link target %q does not resolve to an existing file (%s)", c.Raw, c.Target)
+	msg := fmt.Sprintf("path %q does not resolve to an existing file (%s)", c.Raw, c.Target)
 	if err != nil {
-		msg = fmt.Sprintf("link target %q could not be resolved (%s): %v", c.Raw, c.Target, err)
+		msg = fmt.Sprintf("path %q could not be resolved (%s): %v", c.Raw, c.Target, err)
 	}
 	if c.Message != "" {
 		msg = c.Message
@@ -72,20 +76,85 @@ type Contextual interface {
 	TakeCandidates() []Candidate
 }
 
+// resolvableConfig is this check's `with:` block. Pattern replaces the built-in
+// markdown link grammar with the policy's own extractor.
+type resolvableConfig struct {
+	// Pattern extracts link targets. Its first capture group names the target
+	// when it has one, and the whole match does when it does not, so a policy
+	// can either bracket the path or match it exactly.
+	Pattern string `yaml:"pattern"`
+}
+
+// extractor is what the rule reads targets with: either the built-in markdown
+// link grammar or the policy's own pattern, resolved once at load.
+type extractor struct {
+	re *regexp.Regexp
+}
+
+// custom reports whether the policy supplied the pattern, which decides both
+// applicability and whether markdown masking is meaningful.
+func (e extractor) custom() bool { return e.re != nil }
+
 type resolvableLocalPathFactory struct{}
 
-func (resolvableLocalPathFactory) New(s Spec) Rule { return &resolvableLocalPath{spec: s} }
+func (resolvableLocalPathFactory) New(s Spec) Rule {
+	ex, _ := resolvableCfg(s)
+	return &resolvableLocalPath{spec: s, ex: ex}
+}
 
-// AppliesTo accepts markdown only: the extraction knows markdown link syntax
-// and nothing else, so any other type would be scanned for links that its
-// grammar does not define.
+// AppliesTo answers for a check with no configuration, which is markdown only:
+// the built-in extraction knows markdown link syntax and nothing else, so any
+// other type would be scanned for links that its grammar does not define.
+//
+// A policy supplying its own pattern widens this; see AppliesToSpec.
 func (resolvableLocalPathFactory) AppliesTo(t FileType) bool { return t == TypeMarkdown }
 
-// Validate refuses any configuration at all: the link grammar is fixed, there
-// is nothing to bound, and the check already ignores code unconditionally, so
-// there is no skip_code to turn on. Accepting a `with:` block here would let a
-// policy believe it configured something that was never optional.
-func (resolvableLocalPathFactory) Validate(s Spec) error { return s.RejectWith() }
+// AppliesToSpec widens the check to every file type once the policy supplies a
+// pattern. The markdown-only restriction exists to protect the built-in grammar
+// from files it does not describe; a policy bringing its own extractor has made
+// no claim about markdown, and a Go file naming a path is a legitimate subject.
+func (f resolvableLocalPathFactory) AppliesToSpec(s Spec, t FileType) bool {
+	ex, err := resolvableCfg(s)
+	if err != nil || !ex.custom() {
+		return f.AppliesTo(t)
+	}
+	return true
+}
+
+// Validate accepts a pattern and nothing else. A `with:` block naming no
+// pattern configures nothing, and refusing it keeps a policy from believing it
+// turned on something that does not exist.
+func (resolvableLocalPathFactory) Validate(s Spec) error {
+	if s.With.IsZero() {
+		return nil
+	}
+	_, err := resolvableCfg(s)
+	return err
+}
+
+// Prepare caches the compiled extractor so New does not re-compile per file.
+func (resolvableLocalPathFactory) Prepare(s Spec) (any, error) { return resolvableCfg(s) }
+
+func resolvableCfg(s Spec) (extractor, error) {
+	if ex, ok := s.Config.(extractor); ok {
+		return ex, nil
+	}
+	if s.With.IsZero() {
+		return extractor{}, nil
+	}
+	var cfg resolvableConfig
+	if err := s.DecodeWith(&cfg); err != nil {
+		return extractor{}, err
+	}
+	if cfg.Pattern == "" {
+		return extractor{}, fmt.Errorf("%w: %q", ErrPatternRequired, s.Check)
+	}
+	re, err := regexp.Compile(cfg.Pattern)
+	if err != nil {
+		return extractor{}, fmt.Errorf("%w: %q: %v", ErrBadPattern, s.Check, err)
+	}
+	return extractor{re: re}, nil
+}
 
 // resolvableLocalPath proves that every local relative link target in a
 // markdown file resolves to something that exists.
@@ -100,16 +169,21 @@ func (resolvableLocalPathFactory) Validate(s Spec) error { return s.RejectWith()
 // The rule never stats. It accumulates candidates and the engine resolves them
 // off the read loop, so no line of input waits on a syscall.
 type resolvableLocalPath struct {
-	spec    Spec
-	path    string
-	dir     string
-	class   LineClass
-	pending []Candidate
+	spec Spec
+	ex   extractor
+	path string
+	dir  string
+	// markdown records whether masking applies to this file, since fences and
+	// code spans are a markdown concept and the engine classifies every type.
+	markdown bool
+	class    LineClass
+	pending  []Candidate
 }
 
 func (r *resolvableLocalPath) Init(f FileMeta) {
 	r.path = f.Path
 	r.dir = path.Dir(f.Path)
+	r.markdown = f.Type == TypeMarkdown
 }
 
 // OnClass records the current line's prose/code split for the OnLine that
@@ -120,13 +194,23 @@ func (r *resolvableLocalPath) OnClass(c LineClass) { r.class = c }
 // violations: it cannot decide one without the filesystem, and consulting it
 // here would block the reader.
 //
-// Links are read from a masked copy in which code is blanked, unconditionally
-// rather than behind an option. A link inside a fence is an example, not a
-// reference: a Go generic (`[T any](slice []T)`) has the shape of a link and
-// names no file, so following it reports a target the document never claimed.
-// Masking preserves offsets, so the column still points into the real line.
+// In markdown, links are read from a masked copy in which code is blanked,
+// unconditionally rather than behind an option. A link inside a fence is an
+// example, not a reference: a Go generic (`[T any](slice []T)`) has the shape of
+// a link and names no file, so following it reports a target the document never
+// claimed. Masking preserves offsets, so the column still points into the real
+// line.
+//
+// Masking is confined to markdown because fences and code spans are markdown's
+// concepts. The engine classifies every file type, so a Go file containing
+// backticks would otherwise have real content blanked out of it, and the rule
+// would silently stop looking at the lines that matter.
 func (r *resolvableLocalPath) OnLine(n int, text string) []Violation {
-	for _, l := range extractLinks(r.class.Masked(text)) {
+	subject := text
+	if r.markdown {
+		subject = r.class.Masked(text)
+	}
+	for _, l := range r.extract(subject) {
 		target, ok := resolvableTarget(l.target)
 		if !ok {
 			continue
@@ -150,6 +234,33 @@ func (r *resolvableLocalPath) Finish() []Violation { return nil }
 func (r *resolvableLocalPath) TakeCandidates() []Candidate {
 	out := r.pending
 	r.pending = nil
+	return out
+}
+
+// extract returns the link targets on a line, through the policy's pattern when
+// it supplied one and the built-in markdown grammar otherwise.
+func (r *resolvableLocalPath) extract(text string) []link {
+	if !r.ex.custom() {
+		return extractLinks(text)
+	}
+	return extractPattern(r.ex.re, text)
+}
+
+// extractPattern reads targets with a caller-supplied regex.
+//
+// The first capture group names the target when the pattern has one, so a
+// policy can bracket the path inside a larger match; the whole match names it
+// otherwise. Taking the group rather than the match is also what keeps the
+// reported column on the path itself rather than on whatever preceded it.
+func extractPattern(re *regexp.Regexp, text string) []link {
+	var out []link
+	for _, m := range re.FindAllStringSubmatchIndex(text, -1) {
+		start, end := m[0], m[1]
+		if len(m) >= 4 && m[2] >= 0 {
+			start, end = m[2], m[3]
+		}
+		out = append(out, link{target: text[start:end], offset: start})
+	}
 	return out
 }
 

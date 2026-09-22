@@ -94,7 +94,8 @@ func TestWrongFieldForTheCheckIsRefused(t *testing.T) {
 		{"max on pattern_present", "pattern_present", "pattern: \"x\"\nmax: 42"},
 		{"skip_code on pattern_present", "pattern_present", "pattern: \"x\"\nskip_code: true"},
 		{"skip_code on file_line_max", "file_line_max", "max: 10\nskip_code: true"},
-		{"pattern on resolvable_local_path", "resolvable_local_path", "pattern: \"x\""},
+		// pattern is NOT listed for resolvable_local_path: that check takes one,
+		// as its own tests cover. Every other field is still foreign to it.
 		{"max on resolvable_local_path", "resolvable_local_path", "max: 10"},
 		{"skip_code on resolvable_local_path", "resolvable_local_path", "skip_code: true"},
 		{"unknown key on pattern_absent", "pattern_absent", "pattern: \"x\"\nseverity: high"},

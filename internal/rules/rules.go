@@ -222,6 +222,20 @@ type Factory interface {
 	Validate(s Spec) error
 }
 
+// SpecAware is the optional half of the factory contract, implemented by a
+// check whose applicability depends on how the policy configured it rather than
+// on the check alone.
+//
+// The engine prefers AppliesToSpec over AppliesTo when a factory implements it.
+// A factory implementing neither half differently is unaffected: AppliesTo stays
+// the answer for every check whose file types are fixed.
+type SpecAware interface {
+	// AppliesToSpec reports whether this configuration of the check can decide a
+	// file of this type. It must agree with AppliesTo for a spec carrying no
+	// configuration, so a policy that configures nothing sees no change.
+	AppliesToSpec(s Spec, t FileType) bool
+}
+
 // Preparer is the optional half of the factory contract, implemented by a check
 // whose configuration is worth decoding once instead of per file.
 //

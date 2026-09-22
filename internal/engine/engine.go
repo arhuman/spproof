@@ -226,7 +226,7 @@ func activeRules(p *policy.Policy, src Source, meta rules.FileMeta, evaluated ma
 		if !src.Explicit && !pr.Matches(src.Path) {
 			continue
 		}
-		if !pr.Factory.AppliesTo(meta.Type) {
+		if !appliesTo(pr.Factory, pr.Spec, meta.Type) {
 			continue
 		}
 		r := pr.Factory.New(pr.Spec)
@@ -235,6 +235,19 @@ func activeRules(p *policy.Policy, src Source, meta rules.FileMeta, evaluated ma
 		evaluated[pr.Spec.ID]++
 	}
 	return active
+}
+
+// appliesTo asks the factory whether the check can decide this file's type,
+// preferring the spec-aware answer when the factory has one.
+//
+// Applicability is a property of the configured rule, not only of the check: a
+// policy can widen a check by supplying its own extractor. A factory whose file
+// types are fixed implements only AppliesTo and is unaffected.
+func appliesTo(f rules.Factory, s rules.Spec, t rules.FileType) bool {
+	if sa, ok := f.(rules.SpecAware); ok {
+		return sa.AppliesToSpec(s, t)
+	}
+	return f.AppliesTo(t)
 }
 
 // classAwareRules collects the rules that consume a line's prose/code split, so

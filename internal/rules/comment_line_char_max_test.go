@@ -2,6 +2,7 @@ package rules
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"unicode/utf8"
 )
@@ -12,7 +13,7 @@ func newCharMax(t *testing.T, ty FileType, limit int) Rule {
 	if !ok {
 		t.Fatal("comment_line_char_max is not registered")
 	}
-	spec := Spec{ID: "test-rule", Check: "comment_line_char_max", Max: limit}
+	spec := Spec{ID: "test-rule", Check: "comment_line_char_max", With: WithYAML(fmt.Sprintf("max: %d", limit))}
 	if err := f.Validate(spec); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
@@ -131,12 +132,12 @@ func TestCommentLineCharMaxAppliesOnlyWhereCommentsExist(t *testing.T) {
 func TestCommentLineCharMaxValidateRequiresPositiveMax(t *testing.T) {
 	f, _ := Lookup("comment_line_char_max")
 	for _, limit := range []int{0, -1} {
-		err := f.Validate(Spec{ID: "a", Check: "comment_line_char_max", Max: limit})
+		err := f.Validate(Spec{ID: "a", Check: "comment_line_char_max", With: WithYAML(fmt.Sprintf("max: %d", limit))})
 		if !errors.Is(err, ErrMaxRequired) {
 			t.Errorf("Validate(max=%d) = %v, want ErrMaxRequired", limit, err)
 		}
 	}
-	if err := f.Validate(Spec{ID: "a", Check: "comment_line_char_max", Max: 1}); err != nil {
+	if err := f.Validate(Spec{ID: "a", Check: "comment_line_char_max", With: WithYAML("max: 1")}); err != nil {
 		t.Errorf("Validate(max=1) = %v, want nil", err)
 	}
 }

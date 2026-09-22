@@ -1,15 +1,9 @@
 package rules
 
 import (
-	"errors"
 	"fmt"
 	"unicode/utf8"
 )
-
-// ErrMaxRequired is returned by Validate when a check needing a positive max was
-// declared without one. A max of zero would flag every comment line, so it is a
-// refusal rather than a default.
-var ErrMaxRequired = errors.New("rules: check requires a positive max")
 
 func init() {
 	Register("comment_line_char_max", commentLineCharMaxFactory{})
@@ -17,7 +11,12 @@ func init() {
 
 type commentLineCharMaxFactory struct{}
 
-func (commentLineCharMaxFactory) New(s Spec) Rule { return &commentLineCharMax{spec: s} }
+// New reads the bound once per file. Validate has already proved it is present
+// and positive, so the error cannot occur here.
+func (commentLineCharMaxFactory) New(s Spec) Rule {
+	limit, _ := requireMax(s)
+	return &commentLineCharMax{spec: s, max: limit}
+}
 
 // AppliesTo accepts only types with a line-comment concept: the check has
 // nothing to measure in a file whose comment syntax v1 does not know.
@@ -27,11 +26,13 @@ func (commentLineCharMaxFactory) AppliesTo(t FileType) bool {
 }
 
 func (commentLineCharMaxFactory) Validate(s Spec) error {
-	return requireMaxOnly(s)
+	_, err := requireMax(s)
+	return err
 }
 
 type commentLineCharMax struct {
 	spec   Spec
+	max    int
 	path   string
 	prefix string
 }
@@ -55,16 +56,19 @@ func (r *commentLineCharMax) OnLine(n int, text string) []Violation {
 		return nil
 	}
 	length := utf8.RuneCountInString(text)
-	if length <= r.spec.Max {
+	if length <= r.max {
 		return nil
 	}
 	return []Violation{{
 		RuleID:  r.spec.ID,
 		Path:    r.path,
 		Line:    n,
-		Column:  r.spec.Max + 1,
-		Message: r.spec.Msg(fmt.Sprintf("comment line is %d characters, over the maximum of %d", length, r.spec.Max)),
+		Column:  r.max + 1,
+		Message: r.spec.Msg(fmt.Sprintf("comment line is %d characters, over the maximum of %d", length, r.max)),
 	}}
 }
 
 func (r *commentLineCharMax) Finish() []Violation { return nil }
+
+// Prepare caches the validated bound so New does not re-decode per file.
+func (commentLineCharMaxFactory) Prepare(s Spec) (any, error) { return requireMax(s) }

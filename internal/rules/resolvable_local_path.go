@@ -81,19 +81,11 @@ func (resolvableLocalPathFactory) New(s Spec) Rule { return &resolvableLocalPath
 // grammar does not define.
 func (resolvableLocalPathFactory) AppliesTo(t FileType) bool { return t == TypeMarkdown }
 
-// Validate refuses a pattern and a maximum, which this check never reads: the
-// link grammar is fixed and there is nothing to bound. It rejects skip_code
-// because the check already ignores code unconditionally, so accepting the field
-// would let a policy believe it turned something on that was never optional.
-func (resolvableLocalPathFactory) Validate(s Spec) error {
-	if err := rejectPattern(s); err != nil {
-		return err
-	}
-	if err := rejectMax(s); err != nil {
-		return err
-	}
-	return rejectSkipCode(s)
-}
+// Validate refuses any configuration at all: the link grammar is fixed, there
+// is nothing to bound, and the check already ignores code unconditionally, so
+// there is no skip_code to turn on. Accepting a `with:` block here would let a
+// policy believe it configured something that was never optional.
+func (resolvableLocalPathFactory) Validate(s Spec) error { return s.RejectWith() }
 
 // resolvableLocalPath proves that every local relative link target in a
 // markdown file resolves to something that exists.

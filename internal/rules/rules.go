@@ -7,10 +7,14 @@
 package rules
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"sort"
+
+	"gopkg.in/yaml.v3"
 )
 
 // FileType is a file's kind, derived from its extension alone. v1 has no lexer
@@ -70,15 +74,12 @@ type Rule interface {
 	Finish() []Violation
 }
 
-// Refusals for a field set on a check that never reads it. Ignoring one
-// silently would run a different rule than the policy asked for and report that
-// it held, which is the one outcome this tool exists to prevent. Strict loading
-// already rejects a field no check knows; these reject a known field on the
-// wrong check, which is the same failure in a shape the decoder cannot see.
+// Configuration failures, all raised at policy load so an unusable rule refuses
+// the run rather than rendering as a rule that held.
 var (
-	ErrSkipCodeUnsupported = errors.New("rules: check does not support skip_code")
-	ErrPatternUnsupported  = errors.New("rules: check does not take a pattern")
-	ErrMaxUnsupported      = errors.New("rules: check does not take a max")
+	ErrMaxRequired     = errors.New("rules: check requires a positive max")
+	ErrPatternRequired = errors.New("rules: check requires a pattern")
+	ErrBadPattern      = errors.New("rules: invalid pattern")
 )
 
 // ClassAware is the optional half of the rule contract, implemented by a check
@@ -96,24 +97,101 @@ type ClassAware interface {
 	OnClass(c LineClass)
 }
 
-// Spec is the validated, compiled configuration of one policy rule. Pattern is
-// nil for checks that take no regex. It is compiled once at policy load and
-// shared across every file, so a rule implementation must treat it as read-only.
+// Spec is the validated configuration of one policy rule. It carries only what
+// every check shares; everything check-specific arrives through With. It is
+// built once at policy load and shared across every file, so a rule
+// implementation must treat it as read-only.
 type Spec struct {
-	ID      string
-	Check   string
-	Pattern *regexp.Regexp
-	Max     int
+	ID    string
+	Check string
 
 	// Message replaces the generated violation text when set. A generated
 	// message can say what matched but never why it is banned or what to write
 	// instead, which is the half a reader acting on the violation needs.
 	Message string
 
-	// SkipCode confines the rule to prose, ignoring fenced blocks and inline
-	// code spans. A rule about writing is wrong about code: a document that
-	// bans a word has to name that word, and it names it in a code span.
-	SkipCode bool
+	// With is the rule's `with:` block, still undecoded. A check reads it
+	// through DecodeWith rather than directly, which is what keeps an unknown
+	// key inside the block a refusal rather than a silently dropped field.
+	//
+	// It is a zero Node when the policy wrote no `with:` block at all, and
+	// DecodeWith treats that as an empty mapping so a check with no required
+	// config needs no special case.
+	With yaml.Node
+
+	// Config is what the check's own Validate decoded out of With, kept so New
+	// does not parse YAML again for every file. The engine builds a Rule per
+	// (file, rule) pair, so decoding in New would put the policy parser inside
+	// the walk: measurable as allocations per file, and work that cannot vary
+	// by file since the policy is the same for all of them.
+	//
+	// It is whatever type the check returned; only that check reads it back.
+	Config any
+}
+
+// ErrBadWith is returned by DecodeWith when the `with:` block does not fit the
+// check's configuration: an unknown key, a value of the wrong type, or a
+// mapping where the check expects none.
+var ErrBadWith = errors.New("rules: invalid with block")
+
+// DecodeWith decodes the rule's `with:` block into a check's own config struct,
+// rejecting any key the struct does not declare.
+//
+// Strictness here is the whole point of the block. A check-specific field that
+// decoded into nothing would let a policy declare a constraint the engine never
+// applies and then report that the rule held, which is the one outcome this
+// tool exists to prevent. Because each check owns its config type, a field
+// belonging to another check is simply an unknown key, so the wrong-check case
+// needs no separate guard.
+//
+// The caller passes a pointer to a struct whose fields carry yaml tags. A rule
+// with no configuration at all can skip the call: an unexpected `with:` block
+// is caught at load by RejectWith.
+// It routes through a yaml.Decoder rather than calling Node.Decode directly,
+// because only the Decoder honors KnownFields: Node.Decode silently drops a key
+// the target does not declare, which would reinstate the exact failure this
+// block removes.
+func (s Spec) DecodeWith(target any) error {
+	if s.With.IsZero() {
+		return nil
+	}
+	raw, err := yaml.Marshal(&s.With)
+	if err != nil {
+		return fmt.Errorf("%w: %q: %v", ErrBadWith, s.Check, err)
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	dec.KnownFields(true)
+	if err := dec.Decode(target); err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("%w: %q: %v", ErrBadWith, s.Check, err)
+	}
+	return nil
+}
+
+// WithYAML builds the `with:` block of a Spec from YAML source, for callers
+// constructing a Spec directly instead of loading a policy file. It panics on
+// malformed input, which in a test or a fixture is a bug in the caller rather
+// than a condition to handle.
+func WithYAML(src string) yaml.Node {
+	var n yaml.Node
+	if err := yaml.Unmarshal([]byte(src), &n); err != nil {
+		panic(fmt.Sprintf("rules: WithYAML: %v", err))
+	}
+	// Unmarshal yields a document node wrapping the mapping; the policy loader
+	// hands a rule the mapping itself, so unwrap to match.
+	if n.Kind == yaml.DocumentNode && len(n.Content) == 1 {
+		return *n.Content[0]
+	}
+	return n
+}
+
+// RejectWith refuses a `with:` block for a check that takes no configuration.
+// Accepting and ignoring one would repeat, one level down, the failure the
+// block exists to remove.
+func (s Spec) RejectWith() error {
+	if s.With.IsZero() {
+		return nil
+	}
+	return fmt.Errorf("%w: %q takes no configuration", ErrBadWith, s.Check)
 }
 
 // Msg returns the policy's own wording when it set one, and the generated text
@@ -141,6 +219,19 @@ type Factory interface {
 	// It runs at policy load so an unusable rule refuses the run rather than
 	// rendering as a rule that held.
 	Validate(s Spec) error
+}
+
+// Preparer is the optional half of the factory contract, implemented by a check
+// whose configuration is worth decoding once instead of per file.
+//
+// The loader calls Prepare after Validate and stores the result on Spec.Config,
+// which New then reads back. A factory that does not implement it pays a decode
+// per file, which is correct but wasteful; the engine builds a Rule for every
+// (file, rule) pair.
+type Preparer interface {
+	// Prepare returns the value to cache on Spec.Config. It runs only on a spec
+	// Validate already accepted, so it may assume the configuration is sound.
+	Prepare(s Spec) (any, error)
 }
 
 var registry = map[string]Factory{}
@@ -171,50 +262,72 @@ func Names() []string {
 	return out
 }
 
-// rejectSkipCode refuses skip_code for a check that does not honor it.
+// maxConfig is the `with:` block of a check configured by a single bound. Max
+// is a pointer so an omitted field and an explicit "max: 0" stay distinct: the
+// first is a missing requirement, the second a value the check can reject on
+// its own terms.
+type maxConfig struct {
+	Max *int `yaml:"max"`
+}
+
+// requireMax decodes and validates a bound-only `with:` block, returning the
+// limit. The three max-taking checks share it so a rule to the bound cannot be
+// tightened on one and forgotten on the others.
 //
-// Silently ignoring the field would run a narrower rule than the policy
-// declared and then report that it held, which is exactly the outcome strict
-// loading exists to prevent.
-func rejectSkipCode(s Spec) error {
-	if s.SkipCode {
-		return fmt.Errorf("%w: %q", ErrSkipCodeUnsupported, s.Check)
+// It returns the cached limit when Validate already decoded one, so New costs a
+// type assertion rather than a YAML parse.
+func requireMax(s Spec) (int, error) {
+	if limit, ok := s.Config.(int); ok {
+		return limit, nil
 	}
-	return nil
+	var cfg maxConfig
+	if err := s.DecodeWith(&cfg); err != nil {
+		return 0, err
+	}
+	if cfg.Max == nil {
+		return 0, fmt.Errorf("%w: %q", ErrMaxRequired, s.Check)
+	}
+	if *cfg.Max <= 0 {
+		return 0, fmt.Errorf("%w: %q got max %d", ErrMaxRequired, s.Check, *cfg.Max)
+	}
+	return *cfg.Max, nil
 }
 
-// rejectPattern refuses a pattern for a check that never reads one.
-func rejectPattern(s Spec) error {
-	if s.Pattern != nil {
-		return fmt.Errorf("%w: %q", ErrPatternUnsupported, s.Check)
-	}
-	return nil
+// patternConfig is the `with:` block of the two regex checks. Pattern is
+// compiled at load and shared across every file, so a rule must treat the
+// compiled value as read-only.
+type patternConfig struct {
+	Pattern string `yaml:"pattern"`
+	// SkipCode confines the rule to prose, ignoring fenced blocks and inline
+	// code spans. A rule about writing is wrong about code: a document that
+	// bans a word has to name that word, and it names it in a code span.
+	SkipCode bool `yaml:"skip_code"`
 }
 
-// requireMaxOnly validates a check whose whole configuration is a positive max:
-// the bound is mandatory, and a pattern or skip_code alongside it is a field the
-// check will never read. The three max-taking checks share it so a new refusal
-// cannot be added to one and forgotten on the others.
-func requireMaxOnly(s Spec) error {
-	if s.Max <= 0 {
-		return fmt.Errorf("%w: %q got max %d", ErrMaxRequired, s.Check, s.Max)
-	}
-	if err := rejectPattern(s); err != nil {
-		return err
-	}
-	return rejectSkipCode(s)
+// compiledPattern is what requirePattern caches on the Spec: the regex compiled
+// once at load, rather than per file.
+type compiledPattern struct {
+	re       *regexp.Regexp
+	skipCode bool
 }
 
-// rejectMax refuses a max for a check that never reads one.
-//
-// It can only refuse a positive value: Max is a plain int, so a policy that
-// omits the field and one that writes "max: 0" arrive here identically. Every
-// check that does read Max requires it to be positive, so no policy can mean
-// anything by a zero today, and the ambiguity stays invisible. A check wanting a
-// meaningful zero has to make presence explicit first.
-func rejectMax(s Spec) error {
-	if s.Max != 0 {
-		return fmt.Errorf("%w: %q", ErrMaxUnsupported, s.Check)
+// requirePattern decodes a regex `with:` block and compiles the pattern once.
+// Compiling at load rather than per file keeps both the walk and the line loop
+// free of work that cannot vary by file.
+func requirePattern(s Spec) (*regexp.Regexp, bool, error) {
+	if c, ok := s.Config.(compiledPattern); ok {
+		return c.re, c.skipCode, nil
 	}
-	return nil
+	var cfg patternConfig
+	if err := s.DecodeWith(&cfg); err != nil {
+		return nil, false, err
+	}
+	if cfg.Pattern == "" {
+		return nil, false, fmt.Errorf("%w: %q", ErrPatternRequired, s.Check)
+	}
+	re, err := regexp.Compile(cfg.Pattern)
+	if err != nil {
+		return nil, false, fmt.Errorf("%w: %q: %v", ErrBadPattern, s.Check, err)
+	}
+	return re, cfg.SkipCode, nil
 }

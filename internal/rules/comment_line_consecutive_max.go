@@ -8,8 +8,11 @@ func init() {
 
 type commentLineConsecutiveMaxFactory struct{}
 
+// New reads the bound once per file. Validate has already proved it is present
+// and positive, so the error cannot occur here.
 func (commentLineConsecutiveMaxFactory) New(s Spec) Rule {
-	return &commentLineConsecutiveMax{spec: s}
+	limit, _ := requireMax(s)
+	return &commentLineConsecutiveMax{spec: s, max: limit}
 }
 
 // AppliesTo accepts only types with a line-comment concept: the check has
@@ -20,7 +23,8 @@ func (commentLineConsecutiveMaxFactory) AppliesTo(t FileType) bool {
 }
 
 func (commentLineConsecutiveMaxFactory) Validate(s Spec) error {
-	return requireMaxOnly(s)
+	_, err := requireMax(s)
+	return err
 }
 
 // commentLineConsecutiveMax counts the current run of comment lines. Its state
@@ -28,6 +32,7 @@ func (commentLineConsecutiveMaxFactory) Validate(s Spec) error {
 // memory stays bounded by the longest line as the project requires.
 type commentLineConsecutiveMax struct {
 	spec   Spec
+	max    int
 	path   string
 	prefix string
 	start  int
@@ -71,7 +76,7 @@ func (r *commentLineConsecutiveMax) Finish() []Violation { return r.close() }
 func (r *commentLineConsecutiveMax) close() []Violation {
 	length, start := r.length, r.start
 	r.length, r.start = 0, 0
-	if length <= r.spec.Max {
+	if length <= r.max {
 		return nil
 	}
 	return []Violation{{
@@ -79,6 +84,9 @@ func (r *commentLineConsecutiveMax) close() []Violation {
 		Path:    r.path,
 		Line:    start,
 		Column:  1,
-		Message: r.spec.Msg(fmt.Sprintf("run of %d consecutive comment lines, over the maximum of %d", length, r.spec.Max)),
+		Message: r.spec.Msg(fmt.Sprintf("run of %d consecutive comment lines, over the maximum of %d", length, r.max)),
 	}}
 }
+
+// Prepare caches the validated bound so New does not re-decode per file.
+func (commentLineConsecutiveMaxFactory) Prepare(s Spec) (any, error) { return requireMax(s) }

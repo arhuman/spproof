@@ -2,7 +2,6 @@ package rules
 
 import (
 	"errors"
-	"regexp"
 	"testing"
 )
 
@@ -31,7 +30,7 @@ func TestCustomMessageReachesTheViolation(t *testing.T) {
 	spec := Spec{
 		ID:      "no-todo",
 		Check:   "pattern_absent",
-		Pattern: regexp.MustCompile("TODO"),
+		With:    WithYAML(`pattern: "TODO"`),
 		Message: "file a ticket instead of leaving a marker",
 	}
 	r := f.New(spec)
@@ -74,29 +73,42 @@ func TestCandidateCustomMessage(t *testing.T) {
 	}
 }
 
-// TestSkipCodeRejectedByChecksThatIgnoreIt pins the refusal. Accepting the
-// field and then ignoring it would run a narrower rule than the policy
-// declared and report that it held, which strict loading exists to prevent.
-func TestSkipCodeRejectedByChecksThatIgnoreIt(t *testing.T) {
-	specs := map[string]Spec{
-		"file_line_max":                {Check: "file_line_max", Max: 10},
-		"pattern_present":              {Check: "pattern_present", Pattern: regexp.MustCompile("x")},
-		"comment_line_char_max":        {Check: "comment_line_char_max", Max: 10},
-		"comment_line_consecutive_max": {Check: "comment_line_consecutive_max", Max: 10},
-		"resolvable_local_path":        {Check: "resolvable_local_path"},
+// TestWrongFieldForTheCheckIsRefused is the load-bearing test of the `with:`
+// design: a field that belongs to another check is an unknown key, so it
+// refuses the run instead of loading and reporting that the rule held.
+//
+// Before the block existed these fields were shared, and every one of these
+// cases loaded silently. The table is deliberately exhaustive over the
+// wrong-field pairs rather than sampling, since the whole class is what
+// regressed last time.
+func TestWrongFieldForTheCheckIsRefused(t *testing.T) {
+	cases := []struct {
+		name  string
+		check string
+		with  string
+	}{
+		{"pattern on file_line_max", "file_line_max", "max: 10\npattern: \"x\""},
+		{"pattern on comment_line_char_max", "comment_line_char_max", "max: 10\npattern: \"x\""},
+		{"pattern on comment_line_consecutive_max", "comment_line_consecutive_max", "max: 10\npattern: \"x\""},
+		{"max on pattern_absent", "pattern_absent", "pattern: \"x\"\nmax: 42"},
+		{"max on pattern_present", "pattern_present", "pattern: \"x\"\nmax: 42"},
+		{"skip_code on pattern_present", "pattern_present", "pattern: \"x\"\nskip_code: true"},
+		{"skip_code on file_line_max", "file_line_max", "max: 10\nskip_code: true"},
+		{"pattern on resolvable_local_path", "resolvable_local_path", "pattern: \"x\""},
+		{"max on resolvable_local_path", "resolvable_local_path", "max: 10"},
+		{"skip_code on resolvable_local_path", "resolvable_local_path", "skip_code: true"},
+		{"unknown key on pattern_absent", "pattern_absent", "pattern: \"x\"\nseverity: high"},
+		{"unknown key on file_line_max", "file_line_max", "max: 10\nseverity: high"},
 	}
-	for name, base := range specs {
-		t.Run(name, func(t *testing.T) {
-			f, ok := Lookup(name)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, ok := Lookup(c.check)
 			if !ok {
-				t.Fatalf("%s is not registered", name)
+				t.Fatalf("%s is not registered", c.check)
 			}
-			if err := f.Validate(base); err != nil {
-				t.Fatalf("Validate without skip_code: %v", err)
-			}
-			base.SkipCode = true
-			if err := f.Validate(base); !errors.Is(err, ErrSkipCodeUnsupported) {
-				t.Errorf("Validate with skip_code = %v, want ErrSkipCodeUnsupported", err)
+			err := f.Validate(Spec{Check: c.check, With: WithYAML(c.with)})
+			if !errors.Is(err, ErrBadWith) {
+				t.Errorf("Validate = %v, want ErrBadWith", err)
 			}
 		})
 	}
@@ -109,78 +121,105 @@ func TestSkipCodeAcceptedByPatternAbsent(t *testing.T) {
 	if !ok {
 		t.Fatal("pattern_absent is not registered")
 	}
-	spec := Spec{Check: "pattern_absent", Pattern: regexp.MustCompile("x"), SkipCode: true}
+	spec := Spec{Check: "pattern_absent", With: WithYAML(`pattern: "x"
+skip_code: true`)}
 	if err := f.Validate(spec); err != nil {
 		t.Errorf("Validate: %v, want nil", err)
 	}
 }
 
-// TestPatternRejectedByChecksThatIgnoreIt pins the same refusal for pattern.
-// A check that never reads Spec.Pattern must refuse one: honoring the field
-// nowhere and accepting it here would let a policy declare a constraint the
-// engine never applies, then report that the rule held.
-func TestPatternRejectedByChecksThatIgnoreIt(t *testing.T) {
-	specs := map[string]Spec{
-		"file_line_max":                {Check: "file_line_max", Max: 10},
-		"comment_line_char_max":        {Check: "comment_line_char_max", Max: 10},
-		"comment_line_consecutive_max": {Check: "comment_line_consecutive_max", Max: 10},
-		"resolvable_local_path":        {Check: "resolvable_local_path"},
+// TestMaxZeroIsDistinctFromAbsent pins what the pointer in maxConfig bought.
+// Both are refusals today, but for different reasons, and a check wanting a
+// meaningful zero can now tell them apart.
+func TestMaxZeroIsDistinctFromAbsent(t *testing.T) {
+	f, _ := Lookup("file_line_max")
+	absent := f.Validate(Spec{Check: "file_line_max", With: WithYAML("{}")})
+	zero := f.Validate(Spec{Check: "file_line_max", With: WithYAML("max: 0")})
+	if !errors.Is(absent, ErrMaxRequired) || !errors.Is(zero, ErrMaxRequired) {
+		t.Fatalf("absent = %v, zero = %v, want both ErrMaxRequired", absent, zero)
 	}
-	for name, base := range specs {
-		t.Run(name, func(t *testing.T) {
-			f, ok := Lookup(name)
+	if absent.Error() == zero.Error() {
+		t.Errorf("absent and explicit zero produced the same message %q", absent.Error())
+	}
+}
+
+// TestPrepareCachesConfigForNew pins the optimization that keeps the policy
+// parser out of the walk: every configured check caches its decoded config, and
+// a Rule built from the cached Spec behaves identically to one built without it.
+//
+// The behavioural half matters more than the caching half. A cache that New
+// silently ignored, or that returned a stale value, would be invisible to every
+// other test here.
+func TestPrepareCachesConfigForNew(t *testing.T) {
+	cases := []struct {
+		check string
+		with  string
+		line  string
+		want  int
+	}{
+		{"pattern_absent", `pattern: "TODO"`, "a TODO here", 1},
+		// pattern_present reports absence, so a line that does not match is the
+		// violating case.
+		{"pattern_present", `pattern: "TODO"`, "nothing", 1},
+		{"file_line_max", "max: 1", "one line", 0},
+		{"comment_line_char_max", "max: 4", "// far too long", 1},
+		{"comment_line_consecutive_max", "max: 5", "// one", 0},
+	}
+	for _, c := range cases {
+		t.Run(c.check, func(t *testing.T) {
+			f, ok := Lookup(c.check)
 			if !ok {
-				t.Fatalf("%s is not registered", name)
+				t.Fatalf("%s is not registered", c.check)
 			}
-			if err := f.Validate(base); err != nil {
-				t.Fatalf("Validate without pattern: %v", err)
+			p, ok := f.(Preparer)
+			if !ok {
+				t.Fatalf("%s does not implement Preparer", c.check)
 			}
-			base.Pattern = regexp.MustCompile("ignored")
-			if err := f.Validate(base); !errors.Is(err, ErrPatternUnsupported) {
-				t.Errorf("Validate with pattern = %v, want ErrPatternUnsupported", err)
+			spec := Spec{ID: "r", Check: c.check, With: WithYAML(c.with)}
+			cfg, err := p.Prepare(spec)
+			if err != nil {
+				t.Fatalf("Prepare: %v", err)
+			}
+			if cfg == nil {
+				t.Fatal("Prepare returned no config to cache")
+			}
+
+			// Same spec, once with the cache populated and once without: the
+			// rule must not be able to tell the difference.
+			cached := spec
+			cached.Config = cfg
+			got := runOneLine(f.New(cached), c.line)
+			want := runOneLine(f.New(spec), c.line)
+			if got != want {
+				t.Errorf("cached spec gave %d violations, uncached gave %d", got, want)
+			}
+			if got != c.want {
+				t.Errorf("got %d violations, want %d", got, c.want)
 			}
 		})
 	}
 }
 
-// TestMaxRejectedByChecksThatIgnoreIt is the third field on the same footing.
-// Max is the one field whose absence is indistinguishable from a zero, so a
-// check that ignores it can only refuse a positive one.
-func TestMaxRejectedByChecksThatIgnoreIt(t *testing.T) {
-	specs := map[string]Spec{
-		"pattern_absent":        {Check: "pattern_absent", Pattern: regexp.MustCompile("x")},
-		"pattern_present":       {Check: "pattern_present", Pattern: regexp.MustCompile("x")},
-		"resolvable_local_path": {Check: "resolvable_local_path"},
-	}
-	for name, base := range specs {
-		t.Run(name, func(t *testing.T) {
-			f, ok := Lookup(name)
-			if !ok {
-				t.Fatalf("%s is not registered", name)
-			}
-			if err := f.Validate(base); err != nil {
-				t.Fatalf("Validate without max: %v", err)
-			}
-			base.Max = 42
-			if err := f.Validate(base); !errors.Is(err, ErrMaxUnsupported) {
-				t.Errorf("Validate with max = %v, want ErrMaxUnsupported", err)
-			}
-		})
-	}
+// runOneLine drives a rule over a single line and returns the total violation
+// count from both OnLine and Finish, since a check may report from either.
+func runOneLine(r Rule, text string) int {
+	r.Init(FileMeta{Path: "a.go", Type: TypeGo})
+	n := len(r.OnLine(1, text))
+	return n + len(r.Finish())
 }
 
-// TestFieldsAcceptedByTheChecksThatReadThem is the other half of both tables:
+// TestFieldsAcceptedByTheChecksThatReadThem is the other half of the table:
 // the refusals must not spread to the checks the fields belong to.
 func TestFieldsAcceptedByTheChecksThatReadThem(t *testing.T) {
 	ok := []struct {
 		name string
 		spec Spec
 	}{
-		{"pattern_absent", Spec{Check: "pattern_absent", Pattern: regexp.MustCompile("x")}},
-		{"pattern_present", Spec{Check: "pattern_present", Pattern: regexp.MustCompile("x")}},
-		{"file_line_max", Spec{Check: "file_line_max", Max: 10}},
-		{"comment_line_char_max", Spec{Check: "comment_line_char_max", Max: 10}},
-		{"comment_line_consecutive_max", Spec{Check: "comment_line_consecutive_max", Max: 10}},
+		{"pattern_absent", Spec{Check: "pattern_absent", With: WithYAML(`pattern: "x"`)}},
+		{"pattern_present", Spec{Check: "pattern_present", With: WithYAML(`pattern: "x"`)}},
+		{"file_line_max", Spec{Check: "file_line_max", With: WithYAML("max: 10")}},
+		{"comment_line_char_max", Spec{Check: "comment_line_char_max", With: WithYAML("max: 10")}},
+		{"comment_line_consecutive_max", Spec{Check: "comment_line_consecutive_max", With: WithYAML("max: 10")}},
 	}
 	for _, c := range ok {
 		t.Run(c.name, func(t *testing.T) {
@@ -200,7 +239,8 @@ func TestFieldsAcceptedByTheChecksThatReadThem(t *testing.T) {
 // reported column points into the original line rather than the masked copy.
 func TestPatternAbsentSkipsCode(t *testing.T) {
 	f, _ := Lookup("pattern_absent")
-	spec := Spec{ID: "no-todo", Check: "pattern_absent", Pattern: regexp.MustCompile("TODO"), SkipCode: true}
+	spec := Spec{ID: "no-todo", Check: "pattern_absent", With: WithYAML(`pattern: "TODO"
+skip_code: true`)}
 	r := f.New(spec)
 	r.Init(FileMeta{Path: "a.md", Type: TypeMarkdown})
 
@@ -229,7 +269,7 @@ func TestPatternAbsentSkipsCode(t *testing.T) {
 // did not ask for prose-only sees exactly what it saw before.
 func TestPatternAbsentWithoutSkipCodeIsUnchanged(t *testing.T) {
 	f, _ := Lookup("pattern_absent")
-	spec := Spec{ID: "no-todo", Check: "pattern_absent", Pattern: regexp.MustCompile("TODO")}
+	spec := Spec{ID: "no-todo", Check: "pattern_absent", With: WithYAML(`pattern: "TODO"`)}
 	r := f.New(spec)
 	r.Init(FileMeta{Path: "a.md", Type: TypeMarkdown})
 

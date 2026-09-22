@@ -40,7 +40,8 @@ rules:
   - id: no-todo
     check: pattern_absent
     files: ["**/*.md", "**/*.go"]
-    pattern: "TODO"
+    with:
+      pattern: "TODO"
 `
 
 func TestRunClean(t *testing.T) {
@@ -100,11 +101,13 @@ rules:
   - id: everywhere
     check: pattern_absent
     files: ["**/*"]
-    pattern: "MARK"
+    with:
+      pattern: "MARK"
   - id: go-only
     check: test_go_only
     files: ["**/*"]
-    pattern: "MARK"
+    with:
+      pattern: "MARK"
 `)
 	files := fstest.MapFS{
 		"a.md": {Data: []byte("MARK\n")},
@@ -147,11 +150,13 @@ rules:
   - id: ran
     check: pattern_absent
     files: ["**/*.md"]
-    pattern: "TODO"
+    with:
+      pattern: "TODO"
   - id: never-ran
     check: pattern_absent
     files: ["**/*.rs"]
-    pattern: "TODO"
+    with:
+      pattern: "TODO"
 `)
 	files := fstest.MapFS{"a.md": {Data: []byte("clean\n")}}
 	r, err := Run(p, sources(t, files))
@@ -181,15 +186,18 @@ rules:
   - id: r1
     check: pattern_absent
     files: ["**/*.md"]
-    pattern: "A"
+    with:
+      pattern: "A"
   - id: r2
     check: pattern_absent
     files: ["**/*.md"]
-    pattern: "B"
+    with:
+      pattern: "B"
   - id: r3
     check: pattern_absent
     files: ["**/*.md"]
-    pattern: "C"
+    with:
+      pattern: "C"
 `)
 	opens := 0
 	src := Source{
@@ -217,11 +225,13 @@ rules:
   - id: z-rule
     check: pattern_absent
     files: ["**/*.md"]
-    pattern: "X"
+    with:
+      pattern: "X"
   - id: a-rule
     check: pattern_absent
     files: ["**/*.md"]
-    pattern: "X"
+    with:
+      pattern: "X"
 `)
 	files := fstest.MapFS{
 		"z.md":       {Data: []byte("X\nX\n")},
@@ -287,11 +297,13 @@ rules:
   - id: z-no-todo
     check: pattern_absent
     files: ["**/*.md"]
-    pattern: "TODO"
+    with:
+      pattern: "TODO"
   - id: a-license
     check: pattern_present
     files: ["**/*.md"]
-    pattern: "SPDX-License-Identifier"
+    with:
+      pattern: "SPDX-License-Identifier"
 `)
 	files := fstest.MapFS{"a.md": {Data: []byte("first\nTODO here\n")}}
 
@@ -330,11 +342,13 @@ rules:
   - id: a-no-todo
     check: pattern_absent
     files: ["**/*.md"]
-    pattern: "TODO"
+    with:
+      pattern: "TODO"
   - id: z-license
     check: pattern_present
     files: ["**/*.md"]
-    pattern: "SPDX-License-Identifier"
+    with:
+      pattern: "SPDX-License-Identifier"
 `)
 	files := fstest.MapFS{"a.md": {Data: []byte("TODO on line one\n")}}
 
@@ -574,7 +588,7 @@ func ratchetCorpus() fstest.MapFS {
 
 func ratchetPolicy(t *testing.T, extra string) *policy.Policy {
 	t.Helper()
-	return load(t, "version: 1\nrules:\n  - id: no-todo\n    check: pattern_absent\n    files: [\"**/*.md\"]\n    pattern: \"TODO\"\n"+extra)
+	return load(t, "version: 1\nrules:\n  - id: no-todo\n    check: pattern_absent\n    files: [\"**/*.md\"]\n    with:\n      pattern: \"TODO\"\n"+extra)
 }
 
 // TestRatchetAbsentReportsEverything is the control: without a baseline every
@@ -687,12 +701,14 @@ rules:
   - id: no-todo
     check: pattern_absent
     files: ["**/*.md"]
-    pattern: "TODO"
+    with:
+      pattern: "TODO"
     baseline: 5
   - id: no-fixme
     check: pattern_absent
     files: ["**/*.md"]
-    pattern: "FIXME"
+    with:
+      pattern: "FIXME"
 `)
 	r, err := Run(p, sources(t, files))
 	if err != nil {

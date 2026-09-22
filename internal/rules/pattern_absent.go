@@ -1,14 +1,10 @@
 package rules
 
 import (
-	"errors"
 	"fmt"
+	"regexp"
 	"unicode/utf8"
 )
-
-// ErrPatternRequired is returned by Validate when a check needing a regex was
-// declared without one.
-var ErrPatternRequired = errors.New("rules: check requires a pattern")
 
 func init() {
 	Register("pattern_absent", patternAbsentFactory{})
@@ -16,23 +12,29 @@ func init() {
 
 type patternAbsentFactory struct{}
 
-func (patternAbsentFactory) New(s Spec) Rule { return &patternAbsent{spec: s} }
+// New compiles the pattern once per file. Validate has already proved the
+// config decodes and the regex compiles, so a failure here cannot happen and
+// the error is dropped rather than carried through the Rule contract.
+func (patternAbsentFactory) New(s Spec) Rule {
+	re, skipCode, _ := requirePattern(s)
+	return &patternAbsent{spec: s, pattern: re, skipCode: skipCode}
+}
 
 // AppliesTo accepts every type: a regex over raw lines needs no knowledge of
 // the file's syntax.
 func (patternAbsentFactory) AppliesTo(FileType) bool { return true }
 
 func (patternAbsentFactory) Validate(s Spec) error {
-	if s.Pattern == nil {
-		return fmt.Errorf("%w: %q", ErrPatternRequired, s.Check)
-	}
-	return rejectMax(s)
+	_, _, err := requirePattern(s)
+	return err
 }
 
 type patternAbsent struct {
-	spec  Spec
-	path  string
-	class LineClass
+	spec     Spec
+	pattern  *regexp.Regexp
+	skipCode bool
+	path     string
+	class    LineClass
 }
 
 func (r *patternAbsent) Init(f FileMeta) { r.path = f.Path }
@@ -49,10 +51,10 @@ func (r *patternAbsent) OnClass(c LineClass) { r.class = c }
 // still taken from the line the reader sees rather than from the copy.
 func (r *patternAbsent) OnLine(n int, text string) []Violation {
 	subject := text
-	if r.spec.SkipCode {
+	if r.skipCode {
 		subject = r.class.Masked(text)
 	}
-	locs := r.spec.Pattern.FindAllStringIndex(subject, -1)
+	locs := r.pattern.FindAllStringIndex(subject, -1)
 	if locs == nil {
 		return nil
 	}
@@ -64,7 +66,7 @@ func (r *patternAbsent) OnLine(n int, text string) []Violation {
 			Path:    r.path,
 			Line:    n,
 			Column:  utf8.RuneCountInString(text[:loc[0]]) + 1,
-			Message: r.spec.Msg(fmt.Sprintf("forbidden pattern %q matched %q", r.spec.Pattern.String(), match)),
+			Message: r.spec.Msg(fmt.Sprintf("forbidden pattern %q matched %q", r.pattern.String(), match)),
 			Match:   match,
 		})
 	}
@@ -72,3 +74,12 @@ func (r *patternAbsent) OnLine(n int, text string) []Violation {
 }
 
 func (r *patternAbsent) Finish() []Violation { return nil }
+
+// Prepare caches the compiled regex so New does not re-compile per file.
+func (patternAbsentFactory) Prepare(s Spec) (any, error) {
+	re, skipCode, err := requirePattern(s)
+	if err != nil {
+		return nil, err
+	}
+	return compiledPattern{re: re, skipCode: skipCode}, nil
+}

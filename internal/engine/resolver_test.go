@@ -306,7 +306,8 @@ rules:
   - id: no-todo
     check: pattern_absent
     files: ["**/*.md", "**/*.go"]
-    pattern: "TODO"
+    with:
+      pattern: "TODO"
 `)
 	files := fstest.MapFS{
 		"doc.md": {Data: []byte("TODO and [x](missing.md)\n")},

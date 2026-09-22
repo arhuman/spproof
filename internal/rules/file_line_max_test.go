@@ -2,6 +2,7 @@ package rules
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -12,7 +13,7 @@ func newFileLineMax(t *testing.T, limit int) Rule {
 	if !ok {
 		t.Fatal("file_line_max is not registered")
 	}
-	spec := Spec{ID: "test-rule", Check: "file_line_max", Max: limit}
+	spec := Spec{ID: "test-rule", Check: "file_line_max", With: WithYAML(fmt.Sprintf("max: %d", limit))}
 	if err := f.Validate(spec); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
@@ -97,7 +98,7 @@ func TestFileLineMaxRequiresPositiveMax(t *testing.T) {
 		t.Fatal("file_line_max is not registered")
 	}
 	for _, max := range []int{0, -1} {
-		err := f.Validate(Spec{ID: "r", Check: "file_line_max", Max: max})
+		err := f.Validate(Spec{ID: "r", Check: "file_line_max", With: WithYAML(fmt.Sprintf("max: %d", max))})
 		if !errors.Is(err, ErrMaxRequired) {
 			t.Errorf("Validate(max=%d) = %v, want ErrMaxRequired", max, err)
 		}

@@ -23,7 +23,8 @@ rules:
   - id: no-todo
     check: pattern_absent
     files: ["**/*.md", "**/*.go"]
-    pattern: "TODO"
+    with:
+      pattern: "TODO"
 `
 
 // inDir runs f with the working directory set to dir. The CLI resolves paths
@@ -88,9 +89,9 @@ func TestExitCodeTwo(t *testing.T) {
 		{"missing policy flag", []string{"check", "."}},
 		{"policy file absent", []string{"check", "--policy", "/nonexistent/p.yml", "."}},
 		{"unknown check", []string{"check", "--policy", writePolicy(t, "version: 1\nrules:\n  - id: a\n    check: nope\n    files: [\"*.md\"]\n"), "."}},
-		{"bad version", []string{"check", "--policy", writePolicy(t, "version: 9\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    pattern: \"x\"\n"), "."}},
-		{"unknown field", []string{"check", "--policy", writePolicy(t, "version: 1\nnope: 1\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    pattern: \"x\"\n"), "."}},
-		{"invalid regex", []string{"check", "--policy", writePolicy(t, "version: 1\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    pattern: \"[bad\"\n"), "."}},
+		{"bad version", []string{"check", "--policy", writePolicy(t, "version: 9\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    with:\n      pattern: \"x\"\n"), "."}},
+		{"unknown field", []string{"check", "--policy", writePolicy(t, "version: 1\nnope: 1\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    with:\n      pattern: \"x\"\n"), "."}},
+		{"invalid regex", []string{"check", "--policy", writePolicy(t, "version: 1\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    with:\n      pattern: \"[bad\"\n"), "."}},
 		{"empty rule set", []string{"check", "--policy", writePolicy(t, "version: 1\nrules: []\n"), "."}},
 		{"unreadable path", []string{"check", "--policy", good, "no-such-file.md"}},
 		{"unknown format", []string{"check", "--policy", good, "--format", "xml", "."}},
@@ -135,7 +136,7 @@ func TestStdinWithAs(t *testing.T) {
 // to Go files so the type decides the outcome; a check applying to every type
 // would let the file glob decide instead, which --as deliberately bypasses.
 func TestStdinTypeKeyedByAsExtension(t *testing.T) {
-	policy := writePolicy(t, "version: 1\nrules:\n  - id: go-only\n    check: "+goOnlyViolatingCheck+"\n    files: [\"**/*.go\"]\n    pattern: \"TODO\"\n")
+	policy := writePolicy(t, "version: 1\nrules:\n  - id: go-only\n    check: "+goOnlyViolatingCheck+"\n    files: [\"**/*.go\"]\n    with:\n      pattern: \"TODO\"\n")
 	dir := t.TempDir()
 
 	var mdOut, goOut, errb strings.Builder
@@ -311,7 +312,8 @@ rules:
   - id: no-todo
     check: pattern_absent
     files: ["*.md"]
-    pattern: "TODO"
+    with:
+      pattern: "TODO"
 `
 
 // writeFile creates dir/name with body, making parent directories as needed.
@@ -351,7 +353,7 @@ func TestExplicitFileIgnoresGlobs(t *testing.T) {
 // dropped because no check decides the file's type is legitimately vacuous,
 // unlike a rule dropped by a glob that the caller overrode by naming the file.
 func TestExplicitFileWithNoApplicableRule(t *testing.T) {
-	policy := writePolicy(t, "version: 1\nrules:\n  - id: go-only\n    check: "+goOnlyCheck+"\n    files: [\"**/*.go\"]\n    pattern: \"TODO\"\n")
+	policy := writePolicy(t, "version: 1\nrules:\n  - id: go-only\n    check: "+goOnlyCheck+"\n    files: [\"**/*.go\"]\n    with:\n      pattern: \"TODO\"\n")
 	dir := t.TempDir()
 	writeFile(t, dir, "notes.txt", "TODO here\n")
 

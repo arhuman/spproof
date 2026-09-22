@@ -1,6 +1,7 @@
 package main
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -26,7 +27,14 @@ func init() {
 type goOnlyFactory struct{ reports bool }
 
 func (f goOnlyFactory) New(s rules.Spec) rules.Rule {
-	return &goOnlyRule{spec: s, reports: f.reports}
+	var cfg struct {
+		Pattern string `yaml:"pattern"`
+	}
+	var re *regexp.Regexp
+	if err := s.DecodeWith(&cfg); err == nil && cfg.Pattern != "" {
+		re = regexp.MustCompile(cfg.Pattern)
+	}
+	return &goOnlyRule{spec: s, pattern: re, reports: f.reports}
 }
 
 func (goOnlyFactory) AppliesTo(t rules.FileType) bool { return t == rules.TypeGo }
@@ -35,6 +43,7 @@ func (goOnlyFactory) Validate(rules.Spec) error { return nil }
 
 type goOnlyRule struct {
 	spec    rules.Spec
+	pattern *regexp.Regexp
 	path    string
 	reports bool
 }
@@ -42,7 +51,7 @@ type goOnlyRule struct {
 func (r *goOnlyRule) Init(f rules.FileMeta) { r.path = f.Path }
 
 func (r *goOnlyRule) OnLine(n int, text string) []rules.Violation {
-	if !r.reports || r.spec.Pattern == nil || !r.spec.Pattern.MatchString(text) {
+	if !r.reports || r.pattern == nil || !r.pattern.MatchString(text) {
 		return nil
 	}
 	return []rules.Violation{{

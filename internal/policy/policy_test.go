@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/arhuman/spproof/internal/rules"
 )
 
 const validPolicy = `version: 1
@@ -11,7 +13,8 @@ rules:
   - id: no-em-dash
     check: pattern_absent
     files: ["**/*.md"]
-    pattern: "[a-z]"
+    with:
+      pattern: "[a-z]"
 `
 
 func TestDecodeValid(t *testing.T) {
@@ -26,8 +29,11 @@ func TestDecodeValid(t *testing.T) {
 	if r.Spec.ID != "no-em-dash" || r.Spec.Check != "pattern_absent" {
 		t.Errorf("unexpected spec: %+v", r.Spec)
 	}
-	if r.Spec.Pattern == nil {
-		t.Error("pattern was not compiled at load time")
+	// The pattern now compiles inside the check's own Validate rather than in
+	// the loader, so a successful Decode is the proof it compiled: a bad regex
+	// fails the load outright, which TestDecodeRejects covers.
+	if r.Spec.With.IsZero() {
+		t.Error("the with block did not reach the spec")
 	}
 	if r.Factory == nil {
 		t.Error("factory not bound")
@@ -43,7 +49,8 @@ rules:
   - id: no-em-dash
     check: pattern_absent
     files: ["**/*.md"]
-    pattern: "[a-z]"
+    with:
+      pattern: "[a-z]"
     message: "use a comma or a colon instead"
 `
 	p, err := Decode(strings.NewReader(withMessage))
@@ -73,32 +80,32 @@ func TestDecodeRejections(t *testing.T) {
 	}{
 		{
 			name: "version absent",
-			yaml: "rules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    pattern: \"x\"\n",
+			yaml: "rules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    with:\n      pattern: \"x\"\n",
 			want: ErrBadVersion,
 		},
 		{
 			name: "version wrong",
-			yaml: "version: 2\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    pattern: \"x\"\n",
+			yaml: "version: 2\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    with:\n      pattern: \"x\"\n",
 			want: ErrBadVersion,
 		},
 		{
 			name: "unknown top-level field",
-			yaml: "version: 1\nstrictness: high\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    pattern: \"x\"\n",
+			yaml: "version: 1\nstrictness: high\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    with:\n      pattern: \"x\"\n",
 			want: ErrUnknownField,
 		},
 		{
 			name: "unknown rule field",
-			yaml: "version: 1\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    pattern: \"x\"\n    severity: high\n",
+			yaml: "version: 1\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    with:\n      pattern: \"x\"\n    severity: high\n",
 			want: ErrUnknownField,
 		},
 		{
 			name: "unknown check",
-			yaml: "version: 1\nrules:\n  - id: a\n    check: pattern_maybe\n    files: [\"*.md\"]\n    pattern: \"x\"\n",
+			yaml: "version: 1\nrules:\n  - id: a\n    check: pattern_maybe\n    files: [\"*.md\"]\n    with:\n      pattern: \"x\"\n",
 			want: ErrUnknownCheck,
 		},
 		{
 			name: "duplicate rule id",
-			yaml: "version: 1\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    pattern: \"x\"\n  - id: a\n    check: pattern_absent\n    files: [\"*.go\"]\n    pattern: \"y\"\n",
+			yaml: "version: 1\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    with:\n      pattern: \"x\"\n  - id: a\n    check: pattern_absent\n    files: [\"*.go\"]\n    with:\n      pattern: \"y\"\n",
 			want: ErrDuplicateID,
 		},
 		{
@@ -113,22 +120,22 @@ func TestDecodeRejections(t *testing.T) {
 		},
 		{
 			name: "invalid regex",
-			yaml: "version: 1\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    pattern: \"[unclosed\"\n",
-			want: ErrBadPattern,
+			yaml: "version: 1\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"*.md\"]\n    with:\n      pattern: \"[unclosed\"\n",
+			want: rules.ErrBadPattern,
 		},
 		{
 			name: "missing id",
-			yaml: "version: 1\nrules:\n  - check: pattern_absent\n    files: [\"*.md\"]\n    pattern: \"x\"\n",
+			yaml: "version: 1\nrules:\n  - check: pattern_absent\n    files: [\"*.md\"]\n    with:\n      pattern: \"x\"\n",
 			want: ErrMissingID,
 		},
 		{
 			name: "missing files",
-			yaml: "version: 1\nrules:\n  - id: a\n    check: pattern_absent\n    pattern: \"x\"\n",
+			yaml: "version: 1\nrules:\n  - id: a\n    check: pattern_absent\n    with:\n      pattern: \"x\"\n",
 			want: ErrMissingFiles,
 		},
 		{
 			name: "invalid glob",
-			yaml: "version: 1\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"[bad\"]\n    pattern: \"x\"\n",
+			yaml: "version: 1\nrules:\n  - id: a\n    check: pattern_absent\n    files: [\"[bad\"]\n    with:\n      pattern: \"x\"\n",
 			want: ErrBadGlob,
 		},
 		{
@@ -162,7 +169,8 @@ rules:
   - id: a
     check: pattern_absent
     files: ["**/*.md", "docs/*.txt", "README"]
-    pattern: "x"
+    with:
+      pattern: "x"
 `))
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
@@ -199,7 +207,8 @@ rules:
   - id: a
     check: pattern_absent
     files: ["docs/**", "**"]
-    pattern: "x"
+    with:
+      pattern: "x"
 `))
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
@@ -225,7 +234,7 @@ rules:
 // TestDecodeBaselines pins the pointer semantics: an absent baseline is
 // distinct from baseline: 0, which is a real zero-tolerance ratchet.
 func TestDecodeBaselines(t *testing.T) {
-	base := "version: 1\nrules:\n  - id: r\n    check: pattern_absent\n    files: [\"*.md\"]\n    pattern: \"x\"\n"
+	base := "version: 1\nrules:\n  - id: r\n    check: pattern_absent\n    files: [\"*.md\"]\n    with:\n      pattern: \"x\"\n"
 
 	p, err := Decode(strings.NewReader(base))
 	if err != nil {
@@ -261,7 +270,7 @@ func TestDecodeBaselines(t *testing.T) {
 // TestDecodeRejectsNegativeBaseline: a negative tolerance is meaningless, and
 // silently clamping it would run a rule the policy did not declare.
 func TestDecodeRejectsNegativeBaseline(t *testing.T) {
-	base := "version: 1\nrules:\n  - id: r\n    check: pattern_absent\n    files: [\"*.md\"]\n    pattern: \"x\"\n"
+	base := "version: 1\nrules:\n  - id: r\n    check: pattern_absent\n    files: [\"*.md\"]\n    with:\n      pattern: \"x\"\n"
 	for _, field := range []string{"baseline", "baseline_per_file"} {
 		t.Run(field, func(t *testing.T) {
 			_, err := Decode(strings.NewReader(base + "    " + field + ": -1\n"))

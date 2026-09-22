@@ -13,11 +13,13 @@ rules:
   - id: comment-run
     check: comment_line_consecutive_max
     files: ["**/*.go", "**/*.md"]
-    max: 2
+    with:
+      max: 2
   - id: no-todo
     check: pattern_absent
     files: ["**/*.go", "**/*.md"]
-    pattern: "TODO"
+    with:
+      pattern: "TODO"
 `
 
 // mixedTree holds one .go and one .md file that would both fail the comment rule
@@ -80,7 +82,8 @@ rules:
   - id: comment-run
     check: comment_line_consecutive_max
     files: ["**/*.md"]
-    max: 1
+    with:
+      max: 1
 `
 	files := fstest.MapFS{"docs.md": {Data: []byte("// one\n// two\n// three\n")}}
 	r, err := Run(load(t, p), sources(t, files))

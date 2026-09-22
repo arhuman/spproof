@@ -7,4 +7,5 @@ rules:
       - "cmd/**/*.go"
       - "internal/**/*.go"
       - "docs/**/*.md"
-    pattern: "[\u2014\u2013]"
+    with:
+      pattern: "[—–]"

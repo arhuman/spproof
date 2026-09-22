@@ -3,19 +3,23 @@ rules:
   - id: no-todo
     check: pattern_absent
     files: ["**/*.txt", "**/*.go", "**/*.md"]
-    pattern: "TODO"
+    with:
+      pattern: "TODO"
   - id: needs-package
     check: pattern_present
     files: ["**/*.txt", "**/*.go", "**/*.md"]
-    pattern: "compute"
+    with:
+      pattern: "compute"
   - id: comment-width
     check: comment_line_char_max
     files: ["**/*.txt", "**/*.go"]
-    max: 100
+    with:
+      max: 100
   - id: comment-run
     check: comment_line_consecutive_max
     files: ["**/*.txt", "**/*.go"]
-    max: 4
+    with:
+      max: 4
   - id: links
     check: resolvable_local_path
     files: ["**/*.md"]

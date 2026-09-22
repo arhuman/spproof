@@ -2,7 +2,7 @@ package rules
 
 import (
 	"errors"
-	"regexp"
+	"fmt"
 	"testing"
 )
 
@@ -12,7 +12,7 @@ func newAbsent(t *testing.T, pattern string) Rule {
 	if !ok {
 		t.Fatal("pattern_absent is not registered")
 	}
-	spec := Spec{ID: "test-rule", Check: "pattern_absent", Pattern: regexp.MustCompile(pattern)}
+	spec := Spec{ID: "test-rule", Check: "pattern_absent", With: WithYAML(fmt.Sprintf("pattern: %q", pattern))}
 	if err := f.Validate(spec); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}

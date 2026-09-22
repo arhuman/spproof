@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/arhuman/spproof/internal/rules"
@@ -28,7 +27,6 @@ var (
 	ErrUnknownCheck  = errors.New("policy: unknown check")
 	ErrDuplicateID   = errors.New("policy: duplicate rule id")
 	ErrEmptyRuleSet  = errors.New("policy: rule set is empty")
-	ErrBadPattern    = errors.New("policy: invalid pattern")
 	ErrMissingID     = errors.New("policy: rule id is required")
 	ErrMissingFiles  = errors.New("policy: rule files is required")
 	ErrBadGlob       = errors.New("policy: invalid file glob")
@@ -91,16 +89,18 @@ type file struct {
 	Rules   []ruleNode `yaml:"rules"`
 }
 
+// ruleNode is the top level of one policy rule: what every check shares, plus
+// the undecoded `with:` block holding whatever that one check needs. Keeping
+// check-specific fields out of here is what makes a field on the wrong check a
+// load error rather than a silently ignored one.
 type ruleNode struct {
-	ID       string   `yaml:"id"`
-	Check    string   `yaml:"check"`
-	Files    []string `yaml:"files"`
-	Pattern  string   `yaml:"pattern"`
-	Max      int      `yaml:"max"`
-	Message  string   `yaml:"message"`
-	SkipCode bool     `yaml:"skip_code"`
-	Baseline *int     `yaml:"baseline"`
-	PerFile  *int     `yaml:"baseline_per_file"`
+	ID       string    `yaml:"id"`
+	Check    string    `yaml:"check"`
+	Files    []string  `yaml:"files"`
+	Message  string    `yaml:"message"`
+	With     yaml.Node `yaml:"with"`
+	Baseline *int      `yaml:"baseline"`
+	PerFile  *int      `yaml:"baseline_per_file"`
 }
 
 // Load reads and validates a policy file from disk.
@@ -173,16 +173,22 @@ func compile(n ruleNode, idx int) (Rule, error) {
 		}
 	}
 
-	spec := rules.Spec{ID: n.ID, Check: n.Check, Max: n.Max, Message: n.Message, SkipCode: n.SkipCode}
-	if n.Pattern != "" {
-		re, err := regexp.Compile(n.Pattern)
-		if err != nil {
-			return Rule{}, fmt.Errorf("%w: rule %q: %v", ErrBadPattern, n.ID, err)
-		}
-		spec.Pattern = re
-	}
+	spec := rules.Spec{ID: n.ID, Check: n.Check, Message: n.Message, With: n.With}
+	// Validate decodes the `with:` block through the check's own config type, so
+	// this one call covers a missing field, an unknown one, and an uncompilable
+	// regex alike. The loader no longer knows which checks take a pattern.
 	if err := factory.Validate(spec); err != nil {
 		return Rule{}, fmt.Errorf("policy: rule %q: %w", n.ID, err)
+	}
+	// Decode the check's config once here rather than per file: the engine
+	// builds a Rule for every (file, rule) pair, and the policy cannot vary
+	// between them.
+	if p, ok := factory.(rules.Preparer); ok {
+		cfg, err := p.Prepare(spec)
+		if err != nil {
+			return Rule{}, fmt.Errorf("policy: rule %q: %w", n.ID, err)
+		}
+		spec.Config = cfg
 	}
 	if err := validateBaselines(n); err != nil {
 		return Rule{}, err

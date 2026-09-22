@@ -19,6 +19,9 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 - Contributing guide and security policy.
 - golangci-lint v2 configuration with gosec enabled.
 
+### Changed
+- `go.mod` declares a `go 1.25.0` floor with a `toolchain go1.26.6` line, so the module imports on the oldest supported release instead of requiring the toolchain it was built with.
+
 ### Fixed
 - Version now resolves from build info when ldflags stamped nothing.
 - `--stdin` silently truncated at 64 MiB, so content past the cap was reported as holding. An oversized payload now exits 2.

@@ -13,6 +13,7 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 - `fence_lang:` on `pattern_absent`, narrowing a rule to fenced blocks of one language. It is mutually exclusive with `skip_code:`, the opposite end of the same axis, and a rule naming a fence language drops for every non-markdown file.
 - Ratchets: `baseline:` tolerates a count across the run and `baseline_per_file:` bounds the worst file, so a rule can be adopted on a tree that does not yet satisfy it. Tolerated findings are reported, never hidden.
 - Text and SARIF-shaped JSON output formats.
+- `--format sarif`: SARIF 2.1.0 output, validated against the OASIS schema, for upload to GitHub code scanning. Rule coverage rides in the descriptor properties and a ratchet-tolerated finding renders as a suppressed result, so neither a vacuous rule nor an absorbed violation reads as a clean run.
 - Exit codes: 0 when clean, 1 on violations, 2 when the engine could not run.
 - Benchmark harness with a committed 10000 line corpus, plus CI gates on throughput and on end to end hook latency.
 - Contributing guide and security policy.

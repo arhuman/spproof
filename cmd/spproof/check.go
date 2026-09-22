@@ -25,14 +25,14 @@ const (
 const usage = `spproof proves that declared static checks hold over files.
 
 Usage:
-  spproof check [paths...] --policy <path> [--format text|json]
+  spproof check [paths...] --policy <path> [--format text|json|sarif]
   spproof check --stdin --as=<filename> --policy <path>
   spproof version
 
 Flags:
   --policy <path>   policy file (required; never discovered, so a verdict
                     depends on nothing ambient)
-  --format text     text (default) or json
+  --format text     text (default), json, or sarif (SARIF 2.1.0)
   --stdin           read content from stdin instead of walking paths
   --as <filename>   name stdin content is checked under; its extension keys
                     the file type
@@ -78,7 +78,7 @@ func parseCheckFlags(args []string, stderr io.Writer) (checkOptions, bool) {
 	fs.Usage = func() { fmt.Fprint(stderr, usage) }
 	var (
 		policyPath = fs.String("policy", "", "policy file path (required)")
-		format     = fs.String("format", "text", "output format: text or json")
+		format     = fs.String("format", "text", "output format: text, json or sarif")
 		useStdin   = fs.Bool("stdin", false, "read content from stdin")
 		asName     = fs.String("as", "", "filename stdin content is checked under")
 	)
@@ -90,7 +90,7 @@ func parseCheckFlags(args []string, stderr io.Writer) (checkOptions, bool) {
 		fmt.Fprintln(stderr, "spproof: --policy is required")
 		return checkOptions{}, false
 	}
-	if *format != "text" && *format != "json" {
+	if *format != "text" && *format != "json" && *format != "sarif" {
 		fmt.Fprintf(stderr, "spproof: unknown format %q\n", *format)
 		return checkOptions{}, false
 	}
@@ -186,10 +186,14 @@ func takesValue(fs *flag.FlagSet, arg string) bool {
 }
 
 func render(w io.Writer, format string, r engine.Result) error {
-	if format == "json" {
+	switch format {
+	case "json":
 		return report.JSON(w, r)
+	case "sarif":
+		return report.SARIF(w, r)
+	default:
+		return report.Text(w, r)
 	}
-	return report.Text(w, r)
 }
 
 func collect(paths []string, useStdin bool, asName string, stdin io.Reader) ([]engine.Source, error) {

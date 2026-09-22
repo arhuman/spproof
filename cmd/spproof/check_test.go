@@ -258,6 +258,37 @@ func TestJSONFormat(t *testing.T) {
 	}
 }
 
+// TestSARIFFormat pins the end-to-end shape a code-scanning uploader reads: the
+// document identifies itself as SARIF 2.1.0 and carries the finding with its
+// position.
+func TestSARIFFormat(t *testing.T) {
+	policy := writePolicy(t, todoPolicy)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("TODO\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errb strings.Builder
+	inDir(t, dir, func() {
+		if code := run([]string{"check", "--policy", policy, "--format", "sarif", "."}, nil, &out, &errb); code != exitViolated {
+			t.Fatalf("exit = %d, want 1 (stderr: %s)", code, errb.String())
+		}
+	})
+	for _, want := range []string{
+		`"version": "2.1.0"`,
+		`"$schema"`,
+		`"name": "spproof"`,
+		`"ruleId": "no-todo"`,
+		`"uri": "a.md"`,
+		`"startLine": 1`,
+		`"level": "error"`,
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output missing %s:\n%s", want, out.String())
+		}
+	}
+}
+
 // TestByteIdenticalOutputAcrossRuns is the determinism guarantee stated end to
 // end, at the level a CI job actually diffs.
 func TestByteIdenticalOutputAcrossRuns(t *testing.T) {
@@ -279,7 +310,7 @@ func TestByteIdenticalOutputAcrossRuns(t *testing.T) {
 		}
 	}
 
-	for _, format := range []string{"text", "json"} {
+	for _, format := range []string{"text", "json", "sarif"} {
 		t.Run(format, func(t *testing.T) {
 			var first string
 			inDir(t, dir, func() {

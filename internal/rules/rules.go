@@ -317,32 +317,54 @@ type patternConfig struct {
 	// code spans. A rule about writing is wrong about code: a document that
 	// bans a word has to name that word, and it names it in a code span.
 	SkipCode bool `yaml:"skip_code"`
+	// FenceLang confines the rule to fenced blocks of one language, which is
+	// the opposite end of the same axis as SkipCode: one drops all code, the
+	// other drops everything but one block's code. Setting both contradicts.
+	FenceLang string `yaml:"fence_lang"`
 }
+
+// scope is where in a file a regex check may look, decoded once at load.
+//
+// The two fields are mutually exclusive, which is why they are one value rather
+// than two booleans a rule reads independently: a policy cannot leave them in a
+// state the rule has to invent an answer for.
+type scope struct {
+	skipCode  bool
+	fenceLang string
+}
+
+// ErrFenceLangConflict is returned when a policy sets both skip_code and
+// fence_lang. They are opposite ends of one axis, so honoring either would run a
+// different rule than the policy declared and then report that it held.
+var ErrFenceLangConflict = errors.New("rules: skip_code and fence_lang are mutually exclusive")
 
 // compiledPattern is what requirePattern caches on the Spec: the regex compiled
 // once at load, rather than per file.
 type compiledPattern struct {
-	re       *regexp.Regexp
-	skipCode bool
+	re    *regexp.Regexp
+	scope scope
 }
 
 // requirePattern decodes a regex `with:` block and compiles the pattern once.
 // Compiling at load rather than per file keeps both the walk and the line loop
 // free of work that cannot vary by file.
-func requirePattern(s Spec) (*regexp.Regexp, bool, error) {
+func requirePattern(s Spec) (*regexp.Regexp, scope, error) {
 	if c, ok := s.Config.(compiledPattern); ok {
-		return c.re, c.skipCode, nil
+		return c.re, c.scope, nil
 	}
 	var cfg patternConfig
 	if err := s.DecodeWith(&cfg); err != nil {
-		return nil, false, err
+		return nil, scope{}, err
 	}
 	if cfg.Pattern == "" {
-		return nil, false, fmt.Errorf("%w: %q", ErrPatternRequired, s.Check)
+		return nil, scope{}, fmt.Errorf("%w: %q", ErrPatternRequired, s.Check)
+	}
+	if cfg.SkipCode && cfg.FenceLang != "" {
+		return nil, scope{}, fmt.Errorf("%w: %q", ErrFenceLangConflict, s.Check)
 	}
 	re, err := regexp.Compile(cfg.Pattern)
 	if err != nil {
-		return nil, false, fmt.Errorf("%w: %q: %v", ErrBadPattern, s.Check, err)
+		return nil, scope{}, fmt.Errorf("%w: %q: %v", ErrBadPattern, s.Check, err)
 	}
-	return re, cfg.SkipCode, nil
+	return re, scope{skipCode: cfg.SkipCode, fenceLang: cfg.FenceLang}, nil
 }

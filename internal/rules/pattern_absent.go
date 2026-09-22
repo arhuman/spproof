@@ -16,13 +16,26 @@ type patternAbsentFactory struct{}
 // config decodes and the regex compiles, so a failure here cannot happen and
 // the error is dropped rather than carried through the Rule contract.
 func (patternAbsentFactory) New(s Spec) Rule {
-	re, skipCode, _ := requirePattern(s)
-	return &patternAbsent{spec: s, pattern: re, skipCode: skipCode}
+	re, sc, _ := requirePattern(s)
+	return &patternAbsent{spec: s, pattern: re, scope: sc}
 }
 
 // AppliesTo accepts every type: a regex over raw lines needs no knowledge of
-// the file's syntax.
+// the file's syntax. A rule naming a fence language narrows this; see
+// AppliesToSpec.
 func (patternAbsentFactory) AppliesTo(FileType) bool { return true }
+
+// AppliesToSpec drops the rule for every non-markdown file once the policy names
+// a fence language. Fences are markdown's concept, so such a rule can decide
+// nothing about a Go file: running it there would scan every line of a file that
+// has no blocks to select, which is a broader rule than the policy declared.
+func (f patternAbsentFactory) AppliesToSpec(s Spec, t FileType) bool {
+	_, sc, err := requirePattern(s)
+	if err != nil || sc.fenceLang == "" {
+		return f.AppliesTo(t)
+	}
+	return t == TypeMarkdown
+}
 
 func (patternAbsentFactory) Validate(s Spec) error {
 	_, _, err := requirePattern(s)
@@ -30,29 +43,34 @@ func (patternAbsentFactory) Validate(s Spec) error {
 }
 
 type patternAbsent struct {
-	spec     Spec
-	pattern  *regexp.Regexp
-	skipCode bool
-	path     string
-	class    LineClass
+	spec    Spec
+	pattern *regexp.Regexp
+	scope   scope
+	path    string
+	class   LineClass
 }
 
 func (r *patternAbsent) Init(f FileMeta) { r.path = f.Path }
 
 // OnClass records the current line's prose/code split for the OnLine that
-// follows it. It is a no-op unless the policy set skip_code.
+// follows it. It is a no-op unless the policy narrowed the rule's scope.
 func (r *patternAbsent) OnClass(c LineClass) { r.class = c }
 
 // OnLine reports one violation per match, so a line containing the forbidden
 // pattern three times fails three times.
 //
-// Under skip_code the pattern runs against a masked copy in which code is
-// blanked. Offsets survive masking, so the column and the reported match are
-// still taken from the line the reader sees rather than from the copy.
+// Where the pattern may look is the policy's choice, and both narrowings run it
+// against a blanked copy rather than a shortened one: skip_code drops all code,
+// fence_lang drops everything but one block's code. Offsets survive either, so
+// the column and the reported match are still taken from the line the reader
+// sees rather than from the copy.
 func (r *patternAbsent) OnLine(n int, text string) []Violation {
 	subject := text
-	if r.skipCode {
+	switch {
+	case r.scope.skipCode:
 		subject = r.class.Masked(text)
+	case r.scope.fenceLang != "":
+		subject = r.class.KeptTo(r.scope.fenceLang, text)
 	}
 	locs := r.pattern.FindAllStringIndex(subject, -1)
 	if locs == nil {
@@ -75,11 +93,11 @@ func (r *patternAbsent) OnLine(n int, text string) []Violation {
 
 func (r *patternAbsent) Finish() []Violation { return nil }
 
-// Prepare caches the compiled regex so New does not re-compile per file.
+// Prepare caches the compiled regex and scope so New does not re-decode per file.
 func (patternAbsentFactory) Prepare(s Spec) (any, error) {
-	re, skipCode, err := requirePattern(s)
+	re, sc, err := requirePattern(s)
 	if err != nil {
 		return nil, err
 	}
-	return compiledPattern{re: re, skipCode: skipCode}, nil
+	return compiledPattern{re: re, scope: sc}, nil
 }

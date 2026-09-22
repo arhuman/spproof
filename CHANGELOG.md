@@ -10,6 +10,7 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 - Strict policy loader with clear errors for malformed or ambiguous policy files.
 - Optional `message:` on a rule, replacing the generated violation text so a policy can say why a rule exists and what to write instead.
 - Markdown fence and code-span awareness: `resolvable_local_path` ignores links inside code unconditionally, and `pattern_absent` opts in with `skip_code: true`.
+- `fence_lang:` on `pattern_absent`, narrowing a rule to fenced blocks of one language. It is mutually exclusive with `skip_code:`, the opposite end of the same axis, and a rule naming a fence language drops for every non-markdown file.
 - Ratchets: `baseline:` tolerates a count across the run and `baseline_per_file:` bounds the worst file, so a rule can be adopted on a tree that does not yet satisfy it. Tolerated findings are reported, never hidden.
 - Text and SARIF-shaped JSON output formats.
 - Exit codes: 0 when clean, 1 on violations, 2 when the engine could not run.

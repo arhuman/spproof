@@ -16,6 +16,11 @@ type LineClass struct {
 	// Fenced marks a line inside a fenced block, including the fence markers
 	// themselves. Its content is code in full.
 	Fenced bool
+	// Marker distinguishes the opening and closing delimiter lines from the
+	// block's content while Fenced is set. Both carry the block's Info, so a
+	// rule selecting a block by language needs this to avoid scanning the
+	// delimiters as if they were part of what they delimit.
+	Marker bool
 	// Info is the fence's info string ("go", "makefile", "") while Fenced is
 	// set, taken from the opening marker.
 	Info string
@@ -44,6 +49,41 @@ func (c LineClass) Masked(text string) string {
 		}
 	}
 	return string(b)
+}
+
+// InFenceLang reports whether this line is content inside a fenced block whose
+// language is lang, matched case-insensitively on the first word of the info
+// string so "```Makefile title=x" still counts as makefile.
+//
+// The fence markers themselves are excluded: they carry the block's info string
+// but delimit the content rather than being it, and a rule about what a block
+// contains has nothing to say about the backticks around it.
+func (c LineClass) InFenceLang(lang string) bool {
+	if !c.Fenced || c.Marker {
+		return false
+	}
+	return strings.EqualFold(fenceLanguage(c.Info), lang)
+}
+
+// KeptTo returns text with everything outside a fenced block of the given
+// language blanked, which is the inverse of Masked: one keeps prose and drops
+// code, the other drops everything but one block's code. Offsets survive either
+// way, so a column computed against the result still points into the real line.
+func (c LineClass) KeptTo(lang, text string) string {
+	if c.InFenceLang(lang) {
+		return text
+	}
+	return strings.Repeat(" ", len(text))
+}
+
+// fenceLanguage reduces an info string to the language it names, which is its
+// first whitespace-separated word. Anything after that is the renderer's
+// business (a title, a highlight range) and says nothing about the language.
+func fenceLanguage(info string) string {
+	if i := strings.IndexAny(info, " \t"); i >= 0 {
+		return info[:i]
+	}
+	return info
 }
 
 // InCode reports whether the byte at off falls inside a code region.
@@ -81,12 +121,12 @@ func (c *Classifier) Classify(text string) LineClass {
 	if mark, info, ok := fenceMarker(trimmed); ok {
 		if !c.inFence {
 			c.inFence, c.marker, c.info = true, mark, info
-			return LineClass{Fenced: true, Info: info}
+			return LineClass{Fenced: true, Marker: true, Info: info}
 		}
 		if mark[0] == c.marker[0] && len(mark) >= len(c.marker) && info == "" {
 			was := c.info
 			c.inFence, c.marker, c.info = false, "", ""
-			return LineClass{Fenced: true, Info: was}
+			return LineClass{Fenced: true, Marker: true, Info: was}
 		}
 	}
 	if c.inFence {

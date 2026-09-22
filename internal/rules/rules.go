@@ -147,6 +147,7 @@ var ErrBadWith = errors.New("rules: invalid with block")
 // The caller passes a pointer to a struct whose fields carry yaml tags. A rule
 // with no configuration at all can skip the call: an unexpected `with:` block
 // is caught at load by RejectWith.
+//
 // It routes through a yaml.Decoder rather than calling Node.Decode directly,
 // because only the Decoder honors KnownFields: Node.Decode silently drops a key
 // the target does not declare, which would reinstate the exact failure this

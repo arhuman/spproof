@@ -468,3 +468,41 @@ func TestDogfoodPolicyEnforcesRepo(t *testing.T) {
 		}
 	})
 }
+
+// TestFrontmatterMalformedYAMLExitsOne pins the boundary between the tool's two
+// YAML parses. The policy file failing to parse is a broken run (exit 2); a
+// checked file's frontmatter failing to parse is a finding about that file
+// (exit 1). Conflating them would either hide a real finding behind a crash or
+// report a broken policy as clean code.
+func TestFrontmatterMalformedYAMLExitsOne(t *testing.T) {
+	policy := writePolicy(t, "version: 1\nrules:\n  - id: fm\n    check: yaml_frontmatter\n    files: [\"*.md\"]\n    with:\n      required_keys: [\"name\"]\n")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("---\nname: [unclosed\n---\n\n# Body\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errb strings.Builder
+	inDir(t, dir, func() {
+		if code := run([]string{"check", "--policy", policy, "."}, nil, &out, &errb); code != exitViolated {
+			t.Errorf("exit = %d, want %d (stderr: %s)", code, exitViolated, errb.String())
+		}
+	})
+	if !strings.Contains(out.String(), "does not parse") {
+		t.Errorf("output = %q, want the parse failure reported as a finding", out.String())
+	}
+}
+
+// TestFrontmatterUnusableConfigExitsTwo is the other half: a rule that asks
+// nothing of a file cannot hold or fail, so it must refuse the run rather than
+// render as a check that passed.
+func TestFrontmatterUnusableConfigExitsTwo(t *testing.T) {
+	policy := writePolicy(t, "version: 1\nrules:\n  - id: fm\n    check: yaml_frontmatter\n    files: [\"*.md\"]\n    with:\n      required_keys: []\n")
+	dir := t.TempDir()
+
+	var out, errb strings.Builder
+	inDir(t, dir, func() {
+		if code := run([]string{"check", "--policy", policy, "."}, nil, &out, &errb); code != exitError {
+			t.Errorf("exit = %d, want %d", code, exitError)
+		}
+	})
+}

@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 - `go.mod` declares a `go 1.25.0` floor with a `toolchain go1.26.6` line, so the module imports on the oldest supported release instead of requiring the toolchain it was built with.
 - CI runs the test suite on the go.mod floor and on stable, and splits lint, dogfood and SAST into their own jobs. Action pins moved to checkout v7, setup-go v7, cosign-installer v4 and goreleaser-action v7.
 - CodeQL SAST job added.
+- CI validates the SARIF output against the OASIS 2.1.0 schema, across a violating run, a ratchet-tolerated run and a clean run. The unit tests assert the `$schema` string; only a validator proves the document satisfies it, and keeping it in CI leaves the module on its single dependency and the test suite offline.
 - `.spproof.yml` sets `skip_code: true` on its own em-dash rule: the README documents the rule, so its examples contain the characters the rule forbids.
 - SECURITY.md and CONTRIBUTING.md carry the project's real contact, setup and make targets instead of the scaffold's TODO placeholders.
 - The check count above read six while seven were registered.

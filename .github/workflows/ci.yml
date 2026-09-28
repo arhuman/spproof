@@ -81,6 +81,60 @@ jobs:
           go build -o /tmp/spproof ./cmd/spproof
           /tmp/spproof check --policy .spproof.yml .
 
+      # The unit tests assert the $schema string; only a real validator proves
+      # the document satisfies it. Kept in CI rather than in a Go test so the
+      # module stays on its single dependency and the suite stays offline.
+      #
+      # Two shapes, because they differ structurally: a plain violation, and a
+      # ratchet-tolerated one that renders as a suppressed result. A schema pass
+      # on the first says nothing about the second.
+      - name: Validate SARIF against the OASIS schema
+        run: |
+          set -euo pipefail
+          curl -sfL --retry 3 -o /tmp/sarif-schema.json \
+            https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json
+
+          mkdir -p /tmp/sarif && cd /tmp/sarif
+          printf 'a\nTODO x\n' > t.md
+          cat > plain.yml <<'YAML'
+          version: 1
+          rules:
+            - id: no-todo
+              check: pattern_absent
+              files: ["*.md"]
+              with:
+                pattern: "TODO"
+          YAML
+          cat > ratchet.yml <<'YAML'
+          version: 1
+          rules:
+            - id: no-todo
+              check: pattern_absent
+              files: ["*.md"]
+              baseline: 5
+              with:
+                pattern: "TODO"
+          YAML
+
+          # A violating run exits 1 and still must emit a valid document, so the
+          # exit code is captured rather than allowed to kill the step.
+          /tmp/spproof check --policy plain.yml --format sarif t.md > violation.sarif || true
+          /tmp/spproof check --policy ratchet.yml --format sarif t.md > tolerated.sarif
+          /tmp/spproof check --policy plain.yml --format sarif --stdin --as=clean.md \
+            < /dev/null > clean.sarif
+
+          # Guard against validating an empty file: curl or spproof failing
+          # would otherwise leave a file the validator happily passes.
+          for f in violation.sarif tolerated.sarif clean.sarif; do
+            test -s "$f" || { echo "::error::$f is empty"; exit 1; }
+          done
+          grep -q '"suppressions"' tolerated.sarif \
+            || { echo "::error::tolerated.sarif carries no suppression"; exit 1; }
+
+          pipx run --spec check-jsonschema==0.35.0 check-jsonschema \
+            --schemafile /tmp/sarif-schema.json \
+            violation.sarif tolerated.sarif clean.sarif
+
   commitlint:
     name: commit messages
     runs-on: ubuntu-latest

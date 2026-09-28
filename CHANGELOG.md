@@ -4,6 +4,12 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+### Fixed
+- The v0.1.0 release job never ran: `sigstore/cosign-installer@v4` does not resolve, since that action publishes no floating major tag. It is pinned to `v4.1.2`, so a tag now produces signed archives, an SBOM and checksums as intended.
+
+### Added
+- ADR 0001, recording the design for run-scoped rules: a check whose verdict depends on agreement across files rather than on one file alone.
+
 ## [0.1.0] - 2026-09-28
 
 ### Added

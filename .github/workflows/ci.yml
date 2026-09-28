@@ -56,13 +56,17 @@ jobs:
           # floor and the toolchain, and setup-go honours the toolchain line.
           go-version-file: go.mod
       # Pre-install the pinned tools so `make audit` reuses them instead of
-      # bootstrapping via `make tools`.
+      # bootstrapping. Versions MUST equal _shared/references/versions.md and the
+      # Makefile's GOLANGCI_VERSION / GOVULNCHECK_VERSION: the three agreeing is
+      # the invariant, and `make audit` now verifies the installed version
+      # against its own pin, so a disagreement fails here rather than silently
+      # running a weaker analyzer set.
       - name: Install pinned tools
         run: |
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
           go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
-      # `make audit` = coverage gate + go vet + golangci-lint + govulncheck.
-      # One code path, local and CI.
+      # `make audit` = coverage gate + go vet + go mod verify + golangci-lint +
+      # govulncheck. One code path, local and CI.
       - name: Audit
         run: make audit
 

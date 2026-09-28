@@ -15,17 +15,40 @@ LDFLAGS     := -s -w \
 	-X $(VERSION_PKG).GitCommit=$(COMMIT) \
 	-X $(VERSION_PKG).BuildDate=$(BUILD_DATE)
 
-GOLANGCI_VERSION   := v2.1.6
-GOVULNCHECK_VERSION := latest
+GOLANGCI_VERSION    := v2.13.2
+GOVULNCHECK_VERSION := v1.7.0
 
 .PHONY: audit bench build clean cover fulltest help install release test tidy tools
 
-## audit: vet, staticcheck and vulnerability scan
+## audit: vet, lint and vulnerability scan
+# Each tool is installed when missing or when the copy on PATH does not match the
+# pin, then run on its own unconditional line. A `&& run || echo skipping` guard
+# would let a machine without the tools exit 0 having scanned nothing, and a bare
+# presence test would accept an older analyzer set than CI runs.
+# staticcheck is not invoked separately: golangci-lint v2 runs its analyzers.
 audit: cover
 	@go vet ./...
-	@which golangci-lint > /dev/null && golangci-lint run ./... || echo "golangci-lint not installed, skipping"
-	@which staticcheck > /dev/null && staticcheck ./... || echo "staticcheck not installed, skipping"
-	@which govulncheck > /dev/null && govulncheck ./... || echo "govulncheck not installed, skipping"
+	@$(MAKE) --no-print-directory require-tools
+	go mod verify
+	golangci-lint run ./...
+	govulncheck ./...
+
+# require-tools installs a tool unless the installed version already equals the
+# pin. Comparing the version, not merely the binary's presence, is the point:
+# `which <tool> || install` leaves an older copy in place, so the local gate runs
+# a weaker analyzer set than CI and passes on findings CI will reject.
+.PHONY: require-tools
+require-tools:
+	@have=$$(golangci-lint --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
+	if [ "v$$have" != "$(GOLANGCI_VERSION)" ]; then \
+		echo "golangci-lint $${have:-absent} != $(GOLANGCI_VERSION), installing"; \
+		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION); \
+	fi
+	@have=$$(govulncheck -version 2>/dev/null | sed -n 's/^Scanner: govulncheck@v\(.*\)$$/\1/p' | head -1); \
+	if [ "v$$have" != "$(GOVULNCHECK_VERSION)" ]; then \
+		echo "govulncheck $${have:-absent} != $(GOVULNCHECK_VERSION), installing"; \
+		go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION); \
+	fi
 
 ## bench: run benchmarks
 bench:
@@ -81,7 +104,5 @@ tidy:
 	@gofmt -w .
 	@go mod tidy
 
-## tools: install development tools
-tools:
-	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
-	@go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+## tools: install development tools at the pinned versions
+tools: require-tools

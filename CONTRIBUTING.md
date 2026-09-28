@@ -20,8 +20,9 @@ whole toolchain.
 | `make test` | Unit tests. |
 | `make fulltest` | All tests with the race detector and no cache. |
 | `make cover` | Tests with coverage; fails below `COVER_MIN`. |
-| `make audit` | `make cover` + `go vet` + `golangci-lint` + `govulncheck`. Same command locally and in CI. |
+| `make audit` | `make cover` + `go vet` + `go mod verify` + `golangci-lint` + `govulncheck`. Installs the pinned tool versions when absent or stale, so local and CI run the same analyzers. |
 | `make bench` | Benchmarks. |
+| `make tools` | Install golangci-lint and govulncheck at the pinned versions. |
 | `make install` | Install spproof from this checkout (falls back to the released binary when Go is absent). |
 | `make tidy` | `gofmt` + `go mod tidy`. |
 | `make release` | Derive the next semver from Conventional Commits, tag and push. |

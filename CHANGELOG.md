@@ -34,6 +34,8 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 - The check count above read six while seven were registered.
 
 ### Fixed
+- `make audit` exited 0 on a machine without the lint tools, printing "skipping" three times while running no linter, no static analysis and no vulnerability scan. Each tool is now installed when absent or stale, then run unconditionally, so the gate fails instead of passing vacuously. `go mod verify` was also missing and now runs.
+- The pinned `golangci-lint` was v2.1.6 while CI installed v2.13.2, so `make audit` locally ran a different analyzer set than CI. Both pins now match CI (golangci-lint v2.13.2, govulncheck v1.7.0, previously `latest`), and `require-tools` compares the installed version against the pin rather than only testing that the binary exists.
 - Version now resolves from build info when ldflags stamped nothing.
 - `--stdin` silently truncated at 64 MiB, so content past the cap was reported as holding. An oversized payload now exits 2.
 - A symlink in a walked tree was followed out of the tree, reporting an outside file under an inside path. Symlinks met while walking are now skipped.

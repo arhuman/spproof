@@ -22,6 +22,7 @@ whole toolchain.
 | `make cover` | Tests with coverage; fails below `COVER_MIN`. |
 | `make audit` | `make cover` + `go vet` + `golangci-lint` + `govulncheck`. Same command locally and in CI. |
 | `make bench` | Benchmarks. |
+| `make install` | Install spproof from this checkout (falls back to the released binary when Go is absent). |
 | `make tidy` | `gofmt` + `go mod tidy`. |
 | `make release` | Derive the next semver from Conventional Commits, tag and push. |
 

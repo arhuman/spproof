@@ -135,6 +135,71 @@ jobs:
             --schemafile /tmp/sarif-schema.json \
             violation.sarif tolerated.sarif clean.sarif
 
+  installer:
+    name: install.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Shellcheck
+        run: shellcheck install.sh
+
+      # The script's archive name must track goreleaser's name_template. Nothing
+      # else would catch a drift there until a user ran the published one-liner,
+      # so a synthetic release is served locally and the real script installs
+      # from it: naming, checksum verification and extraction all exercised
+      # without waiting for a tag.
+      - name: Install from a synthetic release
+        run: |
+          set -euo pipefail
+          go build -o /tmp/stage/spproof ./cmd/spproof
+
+          # Mirror the goreleaser layout: spproof_<version without v>_<os>_<arch>.tar.gz
+          rel=/tmp/rel/releases/download/v9.9.9
+          mkdir -p "$rel"
+          tar -czf "$rel/spproof_9.9.9_linux_amd64.tar.gz" -C /tmp/stage spproof
+          ( cd "$rel" && sha256sum spproof_9.9.9_linux_amd64.tar.gz > checksums.txt )
+
+          # stdout and stderr both go to a file, and stdin is closed: a
+          # background server inheriting the step's pipe keeps it open and the
+          # job hangs after the script itself has finished.
+          ( cd /tmp/rel && setsid python3 -m http.server 8765 </dev/null >/tmp/http.log 2>&1 & )
+          ready=0
+          for _ in $(seq 1 20); do
+            if curl -sfI http://127.0.0.1:8765/releases/download/v9.9.9/checksums.txt >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 0.5
+          done
+          # Without this the loop falls through and install.sh fails on a
+          # connection error, which reads like an installer bug rather than a
+          # fixture that never came up.
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::the test release server never came up"
+            cat /tmp/http.log || true
+            exit 1
+          fi
+
+          sed 's|https://github.com/$REPO|http://127.0.0.1:8765|' install.sh > /tmp/install-local.sh
+          VERSION=v9.9.9 INSTALL_DIR=/tmp/bin sh /tmp/install-local.sh
+          test -x /tmp/bin/spproof || { echo "::error::install.sh produced no binary"; exit 1; }
+          /tmp/bin/spproof version
+
+          # A tampered archive must abort the install rather than land a binary.
+          sed -i 's/^[0-9a-f]\{64\}/0000000000000000000000000000000000000000000000000000000000000000/' \
+            "$rel/checksums.txt"
+          rm -rf /tmp/bin2
+          if VERSION=v9.9.9 INSTALL_DIR=/tmp/bin2 sh /tmp/install-local.sh >/dev/null 2>&1; then
+            echo "::error::a checksum mismatch did not fail the install"
+            exit 1
+          fi
+          test ! -e /tmp/bin2/spproof || { echo "::error::a binary was installed despite a bad checksum"; exit 1; }
+          echo "checksum mismatch correctly refused"
+
   commitlint:
     name: commit messages
     runs-on: ubuntu-latest

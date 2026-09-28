@@ -17,11 +17,31 @@ lets a broken config read as a passing build.
 
 ## Install
 
+With Go:
+
 ```bash
 go install github.com/arhuman/spproof/cmd/spproof@latest
 ```
 
-Or download a binary from the [releases page](https://github.com/arhuman/spproof/releases).
+Without Go (Linux and macOS, amd64 and arm64):
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/arhuman/spproof/main/install.sh | sh
+```
+
+The script resolves the latest release, verifies the download against the
+release's `checksums.txt`, and installs to `$HOME/.local/bin`. Set `VERSION` to
+pin a tag and `INSTALL_DIR` to install elsewhere:
+
+```bash
+VERSION=v0.1.0 INSTALL_DIR=/usr/local/bin curl -sSfL \
+  https://raw.githubusercontent.com/arhuman/spproof/main/install.sh | sh
+```
+
+From a clone, `make install` builds the checkout you have rather than fetching a
+release, falling back to the script when Go is absent. Binaries for every
+platform, including Windows, are on the
+[releases page](https://github.com/arhuman/spproof/releases).
 
 ## Use it
 

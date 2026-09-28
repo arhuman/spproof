@@ -20,11 +20,14 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 - golangci-lint v2 configuration with gosec enabled.
 - MIT license.
 - README covering install, policy syntax, the check table, baselines, output formats, CI wiring, and release signature verification.
+- `install.sh`, installing a released binary on a machine without Go. It resolves the latest tag, detects OS and architecture, verifies the archive against the release's `checksums.txt` and installs to `$HOME/.local/bin`; `VERSION` and `INSTALL_DIR` override both. Verification is the default because the documented use is a pipe into a shell.
+- `make install`, building the current checkout when Go is present and falling back to `install.sh` when it is not.
 
 ### Changed
 - `go.mod` declares a `go 1.25.0` floor with a `toolchain go1.26.6` line, so the module imports on the oldest supported release instead of requiring the toolchain it was built with.
 - CI runs the test suite on the go.mod floor and on stable, and splits lint, dogfood and SAST into their own jobs. Action pins moved to checkout v7, setup-go v7, cosign-installer v4 and goreleaser-action v7.
 - CodeQL SAST job added.
+- CI installs from a synthetic release to prove `install.sh` tracks goreleaser's archive naming and refuses a tampered checksum, since nothing else would catch that drift until a user ran the published one-liner.
 - CI validates the SARIF output against the OASIS 2.1.0 schema, across a violating run, a ratchet-tolerated run and a clean run. The unit tests assert the `$schema` string; only a validator proves the document satisfies it, and keeping it in CI leaves the module on its single dependency and the test suite offline.
 - `.spproof.yml` sets `skip_code: true` on its own em-dash rule: the README documents the rule, so its examples contain the characters the rule forbids.
 - SECURITY.md and CONTRIBUTING.md carry the project's real contact, setup and make targets instead of the scaffold's TODO placeholders.

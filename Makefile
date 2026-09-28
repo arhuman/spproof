@@ -18,7 +18,7 @@ LDFLAGS     := -s -w \
 GOLANGCI_VERSION   := v2.1.6
 GOVULNCHECK_VERSION := latest
 
-.PHONY: audit bench build clean cover fulltest help release test tidy tools
+.PHONY: audit bench build clean cover fulltest help install release test tidy tools
 
 ## audit: vet, staticcheck and vulnerability scan
 audit: cover
@@ -52,6 +52,16 @@ cover:
 ## fulltest: run all tests with race detector and no cache
 fulltest:
 	@go test -race -count=1 ./...
+
+## install: install spproof (from this checkout via Go, else the released binary)
+install:
+	@if command -v go > /dev/null 2>&1; then \
+		echo "Installing spproof from this checkout"; \
+		go install -ldflags "$(LDFLAGS)" $(CMD); \
+	else \
+		echo "Go not found, installing the released binary"; \
+		./install.sh; \
+	fi
 
 ## help: show this help
 help:

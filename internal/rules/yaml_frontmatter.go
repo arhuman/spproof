@@ -32,8 +32,40 @@ const maxFrontmatterLines = 200
 // keyConstraint restricts the values of one frontmatter key. It applies to a
 // scalar and to every element of a sequence alike, so a policy does not have to
 // know which shape the document used.
+//
+// Split exists because the same list is written two ways. A YAML sequence makes
+// each item a value of its own; a comma-joined scalar is one value that happens
+// to contain the list. Without it, a policy written against the sequence form
+// holds vacuously over the scalar form, which is the failure this field closes:
+// an unevaluated constraint rendering as one that held.
 type keyConstraint struct {
 	Forbidden []string `yaml:"forbidden"`
+	// Split tokenizes every value this constraint looks at before comparing it,
+	// on the given separator. Tokens are trimmed of surrounding whitespace and
+	// empty ones dropped, so "Read, Edit" and "Read,Edit," read alike. An
+	// unset Split leaves values whole, which is what a policy constraining a
+	// free-form string expects.
+	Split string `yaml:"split"`
+}
+
+// comparable returns the values a constraint compares against Forbidden: the
+// node's own values, or their tokens when the constraint names a separator.
+// Comparison stays equality either way, so a token is forbidden only when the
+// whole token is.
+func (c keyConstraint) comparable(node *yaml.Node) []string {
+	values := scalarValues(node)
+	if c.Split == "" {
+		return values
+	}
+	var out []string
+	for _, v := range values {
+		for _, token := range strings.Split(v, c.Split) {
+			if token = strings.TrimSpace(token); token != "" {
+				out = append(out, token)
+			}
+		}
+	}
+	return out
 }
 
 type frontmatterConfig struct {
@@ -227,8 +259,10 @@ func (r *yamlFrontmatter) constraintViolations(keys map[string]*yaml.Node) []Vio
 		if !found {
 			continue
 		}
-		for _, bad := range r.cfg.KeyConstraints[name].Forbidden {
-			for _, got := range scalarValues(node) {
+		constraint := r.cfg.KeyConstraints[name]
+		comparable := constraint.comparable(node)
+		for _, bad := range constraint.Forbidden {
+			for _, got := range comparable {
 				if got == bad {
 					out = append(out, r.at(node.Line, fmt.Sprintf(
 						"YAML frontmatter key %q carries the forbidden value %q", name, bad)))

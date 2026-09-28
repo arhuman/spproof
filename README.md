@@ -93,7 +93,7 @@ cat draft.md | spproof check --policy .spproof.yml --stdin --as=draft.md
 | `comment_line_char_max` | No comment line exceeds N characters | `max` |
 | `comment_line_consecutive_max` | No run of comment lines exceeds N | `max` |
 | `resolvable_local_path` | Every local link points at a file that exists | optionally `pattern` to supply your own extractor |
-| `yaml_frontmatter` | Frontmatter has the keys you require and none you forbid | `required_keys`, `forbidden`, `forbid_extra_keys`, `key_constraints`, `require_present` |
+| `yaml_frontmatter` | Frontmatter has the keys you require and none you forbid | `required_keys`, `forbid_extra_keys`, `key_constraints`, `require_present` |
 
 Every rule takes `id`, `check`, `files` (glob patterns), and an optional
 `message` replacing the generated wording. Check-specific options go under
@@ -101,6 +101,23 @@ Every rule takes `id`, `check`, `files` (glob patterns), and an optional
 
 A rule that cannot apply to a file's type simply drops for that file. The other
 rules still run on it.
+
+A `key_constraints` entry takes `forbidden`, the values a key may not carry.
+Normally it compares each YAML value whole, whether a scalar or an item in a
+sequence. Add `split: ","` inside the entry to compare each separator-delimited
+token instead, so the same policy reads `tools: Read, Grep, Edit` and the list
+form alike:
+
+```yaml
+- id: agent-tools-readonly
+  check: yaml_frontmatter
+  files: ["agents/*.md"]
+  with:
+    key_constraints:
+      tools:
+        forbidden: ["Edit", "NotebookEdit"]
+        split: ","
+```
 
 ## Adopting a rule on a tree that fails it
 

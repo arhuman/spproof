@@ -4,6 +4,11 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+### 2026-09-28
+
+#### Added
+- `split` inside a `yaml_frontmatter` `key_constraints` entry. The separator is applied to every value the constraint looks at, so a policy written against a YAML list reads a comma-joined scalar at the same depth. Tokens are trimmed and empty ones dropped, and the comparison stays equality, so only a whole token is forbidden. Without it, a forbidden value written inside a joined scalar held vacuously.
+
 ## [0.1.1] - 2026-09-28
 
 ### Fixed

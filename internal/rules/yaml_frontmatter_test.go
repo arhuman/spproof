@@ -334,6 +334,89 @@ func TestFrontmatterAppliesToMarkdownOnly(t *testing.T) {
 	}
 }
 
+// TestFrontmatterKeyConstraintSplit is the case a whole-value comparison gets
+// wrong. A comma-joined scalar is one value, so a constraint written against the
+// sequence form holds vacuously over it, and the same forbidden item reads as
+// permitted. Split makes both shapes render the same verdict, and the pairs
+// below pin that: for one constraint, these are not two policies, they are two
+// spellings of the same declaration.
+func TestFrontmatterKeyConstraintSplit(t *testing.T) {
+	const with = `key_constraints:
+  tools:
+    forbidden: ["Edit", "NotebookEdit"]
+    split: ","`
+	tests := []struct {
+		name string
+		doc  string
+		want int
+	}{
+		{"joined scalar, clean", "---\ntools: Read, Grep, Glob\n---\n", 0},
+		{"joined scalar, one forbidden", "---\ntools: Read, Grep, Edit\n---\n", 1},
+		{"joined scalar, both forbidden", "---\ntools: Edit, Read, NotebookEdit\n---\n", 2},
+		{"trailing separator", "---\ntools: Read, Edit,\n---\n", 1},
+		{"no spaces around separators", "---\ntools: Read,Edit\n---\n", 1},
+		{"single scalar is its own token", "---\ntools: Edit\n---\n", 1},
+		{"flow sequence, split is a no-op", "---\ntools: [Read, Edit]\n---\n", 1},
+		{"block sequence, split is a no-op", "---\ntools:\n  - Read\n  - Edit\n---\n", 1},
+		{"clean block sequence", "---\ntools:\n  - Read\n  - Grep\n---\n", 0},
+		{"element carrying the list", "---\ntools:\n  - Read, Edit\n---\n", 1},
+		{"key absent entirely", "---\nname: a\n---\n", 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			v := runFrontmatter(t, with, tc.doc)
+			if len(v) != tc.want {
+				t.Errorf("got %d violations, want %d: %+v", len(v), tc.want, v)
+			}
+		})
+	}
+}
+
+// TestFrontmatterKeyConstraintSplitNeedsWholeTokens pins that splitting does not
+// loosen the comparison into a substring match. A tool named EditWhatever is a
+// different tool, and a policy that forbade Edit never said anything about it.
+func TestFrontmatterKeyConstraintSplitNeedsWholeTokens(t *testing.T) {
+	const with = `key_constraints:
+  tools:
+    forbidden: ["Edit"]
+    split: ","`
+	const doc = "---\ntools: Editable, MultiEdit, Notebook, ReEdit\n---\n"
+	if v := runFrontmatter(t, with, doc); len(v) != 0 {
+		t.Errorf("got %d violations, want 0: only a whole token is forbidden: %+v", len(v), v)
+	}
+}
+
+// TestFrontmatterKeyConstraintSplitOnSequence pins that the separator is not a
+// scalar-only affair. Every value the constraint looks at is tokenized, so a
+// list element that itself holds a joined list is read at the same depth as a
+// bare scalar would be.
+func TestFrontmatterKeyConstraintSplitOnSequence(t *testing.T) {
+	const with = `key_constraints:
+  tools:
+    forbidden: ["Edit"]
+    split: ","`
+	const doc = "---\ntools:\n  - Read\n  - \"Grep, Edit\"\n---\n"
+	v := runFrontmatter(t, with, doc)
+	if len(v) != 1 {
+		t.Fatalf("got %d violations, want 1: %+v", len(v), v)
+	}
+	if !strings.Contains(v[0].Message, "Edit") {
+		t.Errorf("Message = %q, want it to name the forbidden token", v[0].Message)
+	}
+}
+
+// TestFrontmatterKeyConstraintSplitWithoutForbiddenIsAccepted pins that naming a
+// separator asks nothing on its own. An empty constraint is already meaningful
+// under forbid_extra_keys, where naming a key is how a policy says that key may
+// appear, and a separator alongside it is part of the same declaration.
+func TestFrontmatterKeyConstraintSplitWithoutForbiddenIsAccepted(t *testing.T) {
+	f, _ := Lookup("yaml_frontmatter")
+	with := "key_constraints:\n  tools:\n    split: \",\""
+	if err := f.Validate(Spec{Check: "yaml_frontmatter", With: WithYAML(with)}); err != nil {
+		t.Errorf("Validate: %v, want nil", err)
+	}
+}
+
 // TestFrontmatterValidateRejectsBadConfig keeps the check inside the strict
 // loading contract: an unusable rule refuses the run rather than rendering as a
 // rule that held.

@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-28
+
 ### Fixed
 - The v0.1.0 release job never ran: `sigstore/cosign-installer@v4` does not resolve, since that action publishes no floating major tag. It is pinned to `v4.1.2`, so a tag now produces signed archives, an SBOM and checksums as intended.
 

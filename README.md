@@ -34,7 +34,7 @@ release's `checksums.txt`, and installs to `$HOME/.local/bin`. Set `VERSION` to
 pin a tag and `INSTALL_DIR` to install elsewhere:
 
 ```bash
-VERSION=v0.1.0 INSTALL_DIR=/usr/local/bin curl -sSfL \
+VERSION=v0.1.1 INSTALL_DIR=/usr/local/bin curl -sSfL \
   https://raw.githubusercontent.com/arhuman/spproof/main/install.sh | sh
 ```
 

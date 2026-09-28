@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-28
+
 ### Added
 - `spproof check` CLI: proves a declared set of static checks holds over a file or a tree, for CI jobs, git hooks, and agents.
 - Seven checks: pattern_absent, pattern_present, comment_line_char_max, comment_line_consecutive_max, file_line_max, yaml_frontmatter, and resolvable_local_path (a contextual check).

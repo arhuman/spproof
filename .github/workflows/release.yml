@@ -24,7 +24,10 @@ jobs:
           go-version: stable
       # .goreleaser.yaml declares sboms: and signs:, so syft and cosign must be
       # on PATH or the release fails with "executable file not found".
-      - uses: sigstore/cosign-installer@v4
+      # Pinned to an exact patch, not @v4: sigstore/cosign-installer publishes no
+      # floating major tag, so @v4 fails to resolve and the job dies at "Set up
+      # job" before any step runs.
+      - uses: sigstore/cosign-installer@v4.1.2
       - uses: anchore/sbom-action/download-syft@v0
       - uses: goreleaser/goreleaser-action@v7
         with:
